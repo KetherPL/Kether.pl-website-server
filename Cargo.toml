@@ -1,0 +1,21 @@
+[package]
+name = "Kether_Internal_Services_Server"
+version = "0.0.1"
+edition = "2024"
+authors = ["Dominik Adrian Grzywak <starterx4@gmail.com>"]
+description = "Internal Services Server for the Kether L4D2 server"
+license = "GPL-3.0-only"
+rust-version = "1.85"
+
+[dependencies]
+clap = { version = "4.5.32", features = ["derive", "std"] }
+gamedig = "0.6.1"
+rocket = { version = "0.5.1", features = ["json"] }
+serde_json = "1.0.140"
+
+# The default release profile. It contains all optimizations, without
+# sacrificing debug info. With this profile (like in the standard
+# release profile), the debug info and the stack traces will still be available.
+[profile.release]
+lto = true
+strip = true

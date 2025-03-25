@@ -10,10 +10,10 @@ use rocket::{get, launch, routes, serde::{Deserialize, Serialize, json::Json}};
 struct L4D2ServerInfo {
     name: String,
     map: String,
-    players: u8,
+    players: u8, //num of players already on the server
     maxplayers: u8,
     bots: u8,
-    playerdetails: Vec<PD>,
+    playerdetails: Vec<PD>, //players list + score + duration
     // Add other fields as needed based on the gamedig response
 }
 #[derive(Serialize, Deserialize, Debug)]
@@ -111,5 +111,7 @@ fn live_server_info_kether() -> Result<Json<L4D2ServerInfo>, String> {
 
 #[launch]
 pub fn rocket() -> _ {
-    rocket::build().mount("/api/LiveServerInfo", routes![live_server_info, live_server_info_kether])
+    rocket::build()
+    .configure(rocket::Config::figment().merge(("port", 3001))) // NodeJS / React port
+    .mount("/api/LiveServerInfo", routes![live_server_info, live_server_info_kether])
 }

@@ -7,6 +7,7 @@ use gamedig::games::l4d2;
 use std::thread;
 
 mod databases;
+mod databases_rest;
 mod db;
 mod LiveServerInfo;
 mod models;

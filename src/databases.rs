@@ -20,6 +20,21 @@ pub fn create_bind(pool: &DbPool, new_bind: NewBind) -> Result<Bind, Error> {
         .get_result(&mut conn)
 }
 
+pub fn delete_bind(pool: &DbPool, bind_id: i32) -> Result<usize, Error> {
+    use crate::schema::binds::dsl::*;
+    let mut conn = pool.get().unwrap();
+    diesel::delete(binds.filter(id.eq(bind_id)))
+        .execute(&mut conn)
+}
+
+pub fn update_bind(pool: &DbPool, bind_to_update: Bind) -> Result<Bind, Error> {
+    use crate::schema::binds::dsl::*;
+    let mut conn = pool.get().unwrap();
+    diesel::update(binds.filter(id.eq(bind_to_update.id)))
+        .set((author.eq(bind_to_update.author), text.eq(bind_to_update.text)))
+        .get_result(&mut conn)
+}
+
 pub fn get_bind_suggestions(pool: &DbPool) -> Result<Vec<BindSuggestion>, Error> {
     use crate::schema::bind_suggestions::dsl::*;
     let mut conn = pool.get().unwrap();
@@ -31,6 +46,21 @@ pub fn create_bind_suggestion(pool: &DbPool, new_bind_suggestion: NewBindSuggest
     let mut conn = pool.get().unwrap();
     diesel::insert_into(bind_suggestions::table)
         .values(&new_bind_suggestion)
+        .get_result(&mut conn)
+}
+
+pub fn delete_bind_suggestion(pool: &DbPool, bind_suggestion_id: i32) -> Result<usize, Error> {
+    use crate::schema::bind_suggestions::dsl::*;
+    let mut conn = pool.get().unwrap();
+    diesel::delete(bind_suggestions.filter(id.eq(bind_suggestion_id)))
+        .execute(&mut conn)
+}
+
+pub fn update_bind_suggestion(pool: &DbPool, bind_suggestion_to_update: BindSuggestion) -> Result<BindSuggestion, Error> {
+    use crate::schema::bind_suggestions::dsl::*;
+    let mut conn = pool.get().unwrap();
+    diesel::update(bind_suggestions.filter(id.eq(bind_suggestion_to_update.id)))
+        .set((author.eq(bind_suggestion_to_update.author), text.eq(bind_suggestion_to_update.text), proposed_by.eq(bind_suggestion_to_update.proposed_by)))
         .get_result(&mut conn)
 }
 
@@ -48,6 +78,21 @@ pub fn create_command(pool: &DbPool, new_command: NewCommand) -> Result<Command,
         .get_result(&mut conn)
 }
 
+pub fn delete_command(pool: &DbPool, command_id: i32) -> Result<usize, Error> {
+    use crate::schema::commands::dsl::*;
+    let mut conn = pool.get().unwrap();
+    diesel::delete(commands.filter(id.eq(command_id)))
+        .execute(&mut conn)
+}
+
+pub fn update_command(pool: &DbPool, command_to_update: Command) -> Result<Command, Error> {
+    use crate::schema::commands::dsl::*;
+    let mut conn = pool.get().unwrap();
+    diesel::update(commands.filter(id.eq(command_to_update.id)))
+        .set((command.eq(command_to_update.command), description.eq(command_to_update.description)))
+        .get_result(&mut conn)
+}
+
 pub fn get_bind_votings(pool: &DbPool) -> Result<Vec<BindVoting>, Error> {
     use crate::schema::bind_votings::dsl::*;
     let mut conn = pool.get().unwrap();
@@ -60,4 +105,11 @@ pub fn create_bind_voting(pool: &DbPool, new_bind_voting: NewBindVoting) -> Resu
     diesel::insert_into(bind_votings::table)
         .values(&new_bind_voting)
         .get_result(&mut conn)
+}
+
+pub fn delete_bind_voting(pool: &DbPool, bind_voting_id: i32) -> Result<usize, Error> {
+    use crate::schema::bind_votings::dsl::*;
+    let mut conn = pool.get().unwrap();
+    diesel::delete(bind_votings.filter(id.eq(bind_voting_id)))
+        .execute(&mut conn)
 }

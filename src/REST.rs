@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::databases_rest::mount_database_routes;
 use crate::LiveServerInfo::{live_server_info, live_server_info_kether};
 use rocket::{launch, routes};
 use rocket_cors::{AllowedOrigins, CorsOptions};
@@ -21,8 +22,12 @@ pub fn rocket() -> _ {
     .to_cors()
     .unwrap();
 
+    let db_pool = crate::db::database::establish_connection_pool();
+
     rocket::build()
+        .manage(db_pool)
         .configure(rocket::Config::figment().merge(("port", 3001))) // NodeJS / React port
         .mount("/api/LiveServerInfo", routes![live_server_info, live_server_info_kether])
+        .mount("/api", mount_database_routes())
         .attach(cors)
 }

@@ -7,10 +7,11 @@ use gamedig::games::l4d2;
 use std::thread;
 
 mod databases;
-mod LiveServerInfo_REST;
-mod schema;
-mod models;
 mod db;
+mod LiveServerInfo;
+mod models;
+mod REST;
+mod schema;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -42,7 +43,7 @@ fn main() {
         // :: Start the internal services server ::
         // Start the LiveServerInfo RESTful service
         thread::spawn(move || {
-            LiveServerInfo_REST::main();
+            REST::main();
             std::process::exit(0);
         });
         // Keep the main thread alive so the server thread can run

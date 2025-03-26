@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 use crate::db::database::DbPool;
 use crate::models::bind::{Bind, NewBind, BindVoting, NewBindVoting};
 use crate::models::bind_suggestion::{BindSuggestion, NewBindSuggestion};

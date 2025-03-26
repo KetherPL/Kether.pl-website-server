@@ -1,0 +1,6 @@
+CREATE TABLE bind_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    author TEXT NOT NULL,
+    text TEXT NOT NULL UNIQUE,
+    proposed_by TEXT NOT NULL
+);

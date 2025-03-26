@@ -1,14 +1,6 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    binds (id) {
-        id -> Integer,
-        author -> Text,
-        text -> Text,
-    }
-}
-
-diesel::table! {
     bind_suggestions (id) {
         id -> Integer,
         author -> Text,
@@ -27,6 +19,14 @@ diesel::table! {
 }
 
 diesel::table! {
+    binds (id) {
+        id -> Integer,
+        author -> Text,
+        text -> Text,
+    }
+}
+
+diesel::table! {
     commands (id) {
         id -> Integer,
         command -> Text,
@@ -35,8 +35,8 @@ diesel::table! {
 }
 
 diesel::allow_tables_to_appear_in_same_query!(
-    binds,
     bind_suggestions,
     bind_votings,
+    binds,
     commands,
 );

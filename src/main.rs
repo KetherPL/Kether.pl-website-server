@@ -2,10 +2,15 @@
 
 #![allow(non_snake_case)]
 use clap::{Parser, Subcommand};
+use dotenv::dotenv;
 use gamedig::games::l4d2;
 use std::thread;
 
+mod databases;
 mod LiveServerInfo_REST;
+mod schema;
+mod models;
+mod db;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -29,6 +34,7 @@ enum Commands {
 }
 
 fn main() {
+    dotenv().ok();
     let args = Args::parse();
 
     if args.service {

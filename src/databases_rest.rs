@@ -10,7 +10,7 @@ use crate::db::database::DbPool;
 use crate::models::bind::{Bind, NewBind, BindVoting, NewBindVoting};
 use crate::models::bind_suggestion::{BindSuggestion, NewBindSuggestion};
 use crate::models::command::{Command, NewCommand};
-use rocket::{get, post, delete, put, routes, serde::json::Json, State};
+use rocket::{get, post, put, routes, serde::json::Json, State};
 use rocket::http::Status;
 
 // --- Binds ---
@@ -22,14 +22,14 @@ pub fn get_bind_by_id(db_pool: &State<DbPool>, bind_id: i32) -> Result<Json<Bind
         .map_err(|_| Status::NotFound) // Or InternalServerError if appropriate
 }
 
-#[get("/binds")]
+#[get("/binds/getBinds")]
 pub fn get_all_binds(db_pool: &State<DbPool>) -> Result<Json<Vec<Bind>>, Status> {
     get_binds(db_pool)
         .map(Json)
         .map_err(|_| Status::InternalServerError)
 }
 
-#[post("/binds", data = "<new_bind>")]
+#[post("/binds/addBind", data = "<new_bind>")]
 pub fn create_new_bind(
     db_pool: &State<DbPool>,
     new_bind: Json<NewBind>,
@@ -39,17 +39,17 @@ pub fn create_new_bind(
         .map_err(|_| Status::InternalServerError)
 }
 
-#[delete("/binds/<bind_id>")]
+#[post("/binds/deleteBind", data = "<bind_to_delete>")]
 pub fn delete_existing_bind(
     db_pool: &State<DbPool>,
-    bind_id: i32,
+    bind_to_delete: Json<Bind>,
 ) -> Result<Json<usize>, Status> {
-    delete_bind(db_pool, bind_id)
+    delete_bind(db_pool, bind_to_delete.id)
         .map(Json)
         .map_err(|_| Status::InternalServerError)
 }
 
-#[put("/binds", data = "<bind_to_update>")]
+#[post("/binds/updateBind", data = "<bind_to_update>")]
 pub fn update_existing_bind(
     db_pool: &State<DbPool>,
     bind_to_update: Json<Bind>,
@@ -68,7 +68,7 @@ pub fn get_bind_suggestion_by_id(db_pool: &State<DbPool>, bind_suggestion_id: i3
         .map_err(|_| Status::NotFound)
 }
 
-#[get("/bind_suggestions")]
+#[get("/bind_suggestions/getBindSuggestions")]
 pub fn get_all_bind_suggestions(
     db_pool: &State<DbPool>,
 ) -> Result<Json<Vec<BindSuggestion>>, Status> {
@@ -77,7 +77,7 @@ pub fn get_all_bind_suggestions(
         .map_err(|_| Status::InternalServerError)
 }
 
-#[post("/bind_suggestions", data = "<new_bind_suggestion>")]
+#[post("/bind_suggestions/addBindSuggestion", data = "<new_bind_suggestion>")]
 pub fn create_new_bind_suggestion(
     db_pool: &State<DbPool>,
     new_bind_suggestion: Json<NewBindSuggestion>,
@@ -87,17 +87,17 @@ pub fn create_new_bind_suggestion(
         .map_err(|_| Status::InternalServerError)
 }
 
-#[delete("/bind_suggestions/<bind_suggestion_id>")]
+#[post("/bind_suggestions/deleteBindSuggestion", data = "<bind_suggestion_to_delete>")]
 pub fn delete_existing_bind_suggestion(
     db_pool: &State<DbPool>,
-    bind_suggestion_id: i32,
+    bind_suggestion_to_delete: Json<BindSuggestion>,
 ) -> Result<Json<usize>, Status> {
-    delete_bind_suggestion(db_pool, bind_suggestion_id)
+    delete_bind_suggestion(db_pool, bind_suggestion_to_delete.id)
         .map(Json)
         .map_err(|_| Status::InternalServerError)
 }
 
-#[put("/bind_suggestions", data = "<bind_suggestion_to_update>")]
+#[post("/bind_suggestions/updateBindSuggestion", data = "<bind_suggestion_to_update>")]
 pub fn update_existing_bind_suggestion(
     db_pool: &State<DbPool>,
     bind_suggestion_to_update: Json<BindSuggestion>,
@@ -116,14 +116,14 @@ pub fn get_command_by_id(db_pool: &State<DbPool>, command_id: i32) -> Result<Jso
         .map_err(|_| Status::NotFound)
 }
 
-#[get("/commands")]
+#[get("/commands/getCommands")]
 pub fn get_all_commands(db_pool: &State<DbPool>) -> Result<Json<Vec<Command>>, Status> {
     get_commands(db_pool)
         .map(Json)
         .map_err(|_| Status::InternalServerError)
 }
 
-#[post("/commands", data = "<new_command>")]
+#[post("/commands/addCommand", data = "<new_command>")]
 pub fn create_new_command(
     db_pool: &State<DbPool>,
     new_command: Json<NewCommand>,
@@ -133,17 +133,17 @@ pub fn create_new_command(
         .map_err(|_| Status::InternalServerError)
 }
 
-#[delete("/commands/<command_id>")]
+#[post("/commands/deleteCommand", data = "<command_to_delete>")]
 pub fn delete_existing_command(
     db_pool: &State<DbPool>,
-    command_id: i32,
+    command_to_delete: Json<Command>,
 ) -> Result<Json<usize>, Status> {
-    delete_command(db_pool, command_id)
+    delete_command(db_pool, command_to_delete.id)
         .map(Json)
         .map_err(|_| Status::InternalServerError)
 }
 
-#[put("/commands", data = "<command_to_update>")]
+#[post("/commands/updateCommand", data = "<command_to_update>")]
 pub fn update_existing_command(
     db_pool: &State<DbPool>,
     command_to_update: Json<Command>,
@@ -162,14 +162,14 @@ pub fn get_bind_voting_by_id(db_pool: &State<DbPool>, bind_voting_id: i32) -> Re
         .map_err(|_| Status::NotFound)
 }
 
-#[get("/bind_votings")]
+#[get("/bind_votings/getBindVotings")]
 pub fn get_all_bind_votings(db_pool: &State<DbPool>) -> Result<Json<Vec<BindVoting>>, Status> {
     get_bind_votings(db_pool)
         .map(Json)
         .map_err(|_| Status::InternalServerError)
 }
 
-#[post("/bind_votings", data = "<new_bind_voting>")]
+#[post("/bind_votings/addBindVoting", data = "<new_bind_voting>")]
 pub fn create_new_bind_voting(
     db_pool: &State<DbPool>,
     new_bind_voting: Json<NewBindVoting>,
@@ -179,12 +179,12 @@ pub fn create_new_bind_voting(
         .map_err(|_| Status::InternalServerError)
 }
 
-#[delete("/bind_votings/<bind_voting_id>")]
+#[post("/bind_votings/deleteBindVoting", data = "<bind_voting_to_delete>")]
 pub fn delete_existing_bind_voting(
     db_pool: &State<DbPool>,
-    bind_voting_id: i32,
+    bind_voting_to_delete: Json<BindVoting>,
 ) -> Result<Json<usize>, Status> {
-    delete_bind_voting(db_pool, bind_voting_id)
+    delete_bind_voting(db_pool, bind_voting_to_delete.id)
         .map(Json)
         .map_err(|_| Status::InternalServerError)
 }

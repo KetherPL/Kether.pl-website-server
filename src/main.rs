@@ -14,6 +14,9 @@ mod models;
 mod REST;
 mod schema;
 
+static DATABASE_PATH: &str ="./kether.sqlite"; // Hardcoded in case if DB_PATH env var would be unavailable
+
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {

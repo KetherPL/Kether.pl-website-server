@@ -2,7 +2,7 @@ use diesel::{r2d2::{ConnectionManager, Pool}, SqliteConnection};
 use dotenv::dotenv;
 use std::{env, path::PathBuf, string::ParseError, env::VarError};
 
-use crate::DATABASE_PATH;
+use crate::{exe_dir, DATABASE_PATH, DATABASE_RELATIVE_DIR};
 
 pub type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -18,11 +18,25 @@ fn db_path() -> Result<PathBuf, ParseError> {
             Ok(db_path)
         }
         Err(VarError::NotPresent) => {
-            Ok(DATABASE_PATH.into())
+            if DATABASE_RELATIVE_DIR {
+                let db_path = exe_dir()
+                    .expect("Failed to get executable's directory")
+                    .join(DATABASE_PATH);
+                Ok(db_path)
+            } else {
+                Ok(DATABASE_PATH.into())
+            }
         }
         Err(e) => {
             eprintln!("Error reading DB_PATH environment variable: {}", e);
-            Ok(DATABASE_PATH.into())
+            if DATABASE_RELATIVE_DIR {
+                let db_path = exe_dir()
+                    .expect("Failed to get executable's directory")
+                    .join(DATABASE_PATH);
+                Ok(db_path)
+            } else {
+                Ok(DATABASE_PATH.into())
+            }
         }
     }
 }

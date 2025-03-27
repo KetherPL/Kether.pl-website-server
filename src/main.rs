@@ -2,9 +2,10 @@
 
 #![allow(non_snake_case)]
 use clap::{Parser, Subcommand};
+use colored::Colorize;
 use dotenv::dotenv;
 use gamedig::games::l4d2;
-use std::thread;
+use std::{fmt, path::PathBuf, thread};
 
 mod databases;
 mod databases_rest;
@@ -14,8 +15,9 @@ mod models;
 mod REST;
 mod schema;
 
-static DATABASE_PATH: &str ="./kether.sqlite"; // Hardcoded in case if DB_PATH env var would be unavailable
-
+static DATABASE_PATH: &str = "kether.sqlite"; // Hardcoded in case if DB_PATH env var would be unavailable
+static DATABASE_RELATIVE_DIR: bool = true; /* Is the database in the same dir as the executable?
+                                        If yes, just put a file NAME in the DATABASE_PATH */
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -83,3 +85,35 @@ fn query_l4d2_server(ip: &str, port: u16) {
         Ok(r) => println!("{:#?}", r)
     }
 }
+
+fn exe_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    match std::env::current_exe() {
+        Ok(exe_path) => {
+            if let Some(exe_dir) = exe_path.parent() {
+                Ok(exe_dir.to_path_buf())
+            } else {
+                let err = format!("Could not determine the parent directory of the executable.");
+                eprintln!("{} {}", "Error:".red(), err);
+                return Err(Box::new(QuietErr(Some(err))));
+            }
+        }
+        Err(e) => {
+            let err = format!("Failed to get current executable path:\n {}", e);
+            eprintln!("{} {}", "Error:".red(), err);
+            return Err(Box::new(QuietErr(Some(err))));
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct QuietErr(Option<String>);
+impl fmt::Display for QuietErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(ref msg) = self.0 {
+            write!(f, "{}", msg)
+        } else {
+            write!(f, "")
+        }
+    }
+}
+impl std::error::Error for QuietErr {}

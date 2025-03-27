@@ -26,7 +26,14 @@ pub fn get_bind_by_id(db_pool: &State<DbPool>, bind_id: i32) -> Result<Json<Bind
 pub fn get_all_binds(db_pool: &State<DbPool>) -> Result<Json<Vec<Bind>>, Status> {
     get_binds(db_pool)
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/binds/addBind", data = "<new_bind>")]
@@ -36,7 +43,14 @@ pub fn create_new_bind(
 ) -> Result<Json<Bind>, Status> {
     create_bind(db_pool, new_bind.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/binds/deleteBind", data = "<bind_to_delete>")]
@@ -46,7 +60,14 @@ pub fn delete_existing_bind(
 ) -> Result<Json<usize>, Status> {
     delete_bind(db_pool, bind_to_delete.id)
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/binds/updateBind", data = "<bind_to_update>")]
@@ -56,7 +77,14 @@ pub fn update_existing_bind(
 ) -> Result<Json<Bind>, Status> {
     update_bind(db_pool, bind_to_update.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 // --- Bind Suggestions ---
@@ -74,7 +102,14 @@ pub fn get_all_bind_suggestions(
 ) -> Result<Json<Vec<BindSuggestion>>, Status> {
     get_bind_suggestions(db_pool)
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/bind_suggestions/addBindSuggestion", data = "<new_bind_suggestion>")]
@@ -84,7 +119,14 @@ pub fn create_new_bind_suggestion(
 ) -> Result<Json<BindSuggestion>, Status> {
     create_bind_suggestion(db_pool, new_bind_suggestion.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/bind_suggestions/deleteBindSuggestion", data = "<bind_suggestion_to_delete>")]
@@ -94,7 +136,14 @@ pub fn delete_existing_bind_suggestion(
 ) -> Result<Json<usize>, Status> {
     delete_bind_suggestion(db_pool, bind_suggestion_to_delete.id)
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/bind_suggestions/updateBindSuggestion", data = "<bind_suggestion_to_update>")]
@@ -104,7 +153,14 @@ pub fn update_existing_bind_suggestion(
 ) -> Result<Json<BindSuggestion>, Status> {
     update_bind_suggestion(db_pool, bind_suggestion_to_update.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 // --- Commands ---
@@ -120,7 +176,14 @@ pub fn get_command_by_id(db_pool: &State<DbPool>, command_id: i32) -> Result<Jso
 pub fn get_all_commands(db_pool: &State<DbPool>) -> Result<Json<Vec<Command>>, Status> {
     get_commands(db_pool)
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/commands/addCommand", data = "<new_command>")]
@@ -130,7 +193,14 @@ pub fn create_new_command(
 ) -> Result<Json<Command>, Status> {
     create_command(db_pool, new_command.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/commands/deleteCommand", data = "<command_to_delete>")]
@@ -140,7 +210,14 @@ pub fn delete_existing_command(
 ) -> Result<Json<usize>, Status> {
     delete_command(db_pool, command_to_delete.id)
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/commands/updateCommand", data = "<command_to_update>")]
@@ -150,7 +227,14 @@ pub fn update_existing_command(
 ) -> Result<Json<Command>, Status> {
     update_command(db_pool, command_to_update.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 // --- Bind Votings ---
@@ -166,7 +250,14 @@ pub fn get_bind_voting_by_id(db_pool: &State<DbPool>, bind_voting_id: i32) -> Re
 pub fn get_all_bind_votings(db_pool: &State<DbPool>) -> Result<Json<Vec<BindVoting>>, Status> {
     get_bind_votings(db_pool)
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/bind_votings/addBindVoting", data = "<new_bind_voting>")]
@@ -176,7 +267,14 @@ pub fn create_new_bind_voting(
 ) -> Result<Json<BindVoting>, Status> {
     create_bind_voting(db_pool, new_bind_voting.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[post("/bind_votings/deleteBindVoting", data = "<bind_voting_to_delete>")]
@@ -186,7 +284,14 @@ pub fn delete_existing_bind_voting(
 ) -> Result<Json<usize>, Status> {
     delete_bind_voting(db_pool, bind_voting_to_delete.id)
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 //By ID
@@ -198,7 +303,14 @@ pub fn update_existing_bind_by_id(
 ) -> Result<Json<Bind>, Status> {
     update_bind_by_id(db_pool, bind_id, bind_to_update.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[put("/bind_suggestions/<bind_suggestion_id>", data = "<bind_suggestion_to_update>")]
@@ -209,7 +321,14 @@ pub fn update_existing_bind_suggestion_by_id(
 ) -> Result<Json<BindSuggestion>, Status> {
     update_bind_suggestion_by_id(db_pool, bind_suggestion_id, bind_suggestion_to_update.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 #[put("/commands/<command_id>", data = "<command_to_update>")]
@@ -220,7 +339,14 @@ pub fn update_existing_command_by_id(
 ) -> Result<Json<Command>, Status> {
     update_command_by_id(db_pool, command_id, command_to_update.into_inner())
         .map(Json)
-        .map_err(|_| Status::InternalServerError)
+        .map_err(|e| {
+    eprintln!("Database error: {:?}", e); // Log the error for debugging
+    match e {
+        diesel::result::Error::NotFound => Status::NotFound,
+        diesel::result::Error::DatabaseError(_, _) => Status::BadRequest,
+        _ => Status::InternalServerError,
+    }
+})
 }
 
 // --- Mount the routes in REST.rs ---

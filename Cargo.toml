@@ -9,6 +9,7 @@ rust-version = "1.85"
 
 [dependencies]
 clap = { version = "4.5.32", features = ["derive", "std"] }
+colored = "3.0.0"
 diesel = { version = "2.2.8", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"] }
 dotenv = "0.15.0"
 gamedig = "0.6.1"

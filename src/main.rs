@@ -13,6 +13,8 @@ mod databases_rest;
 mod db;
 mod models;
 mod schema;
+mod steam_rest;
+
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

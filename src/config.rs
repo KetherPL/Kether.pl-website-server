@@ -13,6 +13,7 @@ pub const DATABASE_RELATIVE_DIR: bool = true; /* Is the database in the same dir
 pub struct Config {
     pub database_path: String,
     pub database_relative_dir: bool,
+    pub steam_web_api_key: String,
 }
 
 impl Config {
@@ -33,7 +34,9 @@ impl Config {
                     .set("database_path", DATABASE_PATH)
                     .set(";; Is the database in the same dir as the executable? If yes, don't forget to put just a file NAME in the database_path option.", "")
                     .set(";; False ", " any directory that the shell is already in")
-                    .set("database_relative_dir", DATABASE_RELATIVE_DIR.to_string());
+                    .set("database_relative_dir", DATABASE_RELATIVE_DIR.to_string())
+                    .set(";; Steam Web API key that will be utilized to fetch Steam user data (e.g. name, avatar, etc).", "")
+                    .set("steam_web_api_key", "");
                 newconf.write_to_file(&conf_path)?;
                 newconf
             }
@@ -54,6 +57,12 @@ impl Config {
                 sec.insert("database_relative_dir", DATABASE_RELATIVE_DIR.to_string());
                 changed = true;
             }
+
+            if !sec.contains_key("steam_web_api_key") {
+                eprintln!("Key 'steam_web_api_key' not found in {}. Adding...", CONF_FILE_NAME);
+                sec.insert("steam_web_api_key", "");
+                changed = true;
+            }
         } // sec goes out of scope here, releasing the mutable borrow
 
         if changed {
@@ -65,10 +74,13 @@ impl Config {
         let sec = ini.general_section();
         let db_path = sec.get("database_path").unwrap().to_string();
         let db_relative_dir = sec.get("database_relative_dir").unwrap().parse::<bool>().unwrap();
+        let steam_web_api_key = sec.get("steam_web_api_key").unwrap().to_string();
+        
 
         Ok(Config {
             database_path: db_path,
             database_relative_dir: db_relative_dir,
+            steam_web_api_key,
         })
     }
 }

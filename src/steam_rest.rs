@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use rocket::routes;
-use rocket::{get, serde::json::Json, http::Status, State};
-use steam_rs::{steam_user::get_player_summaries::Player, player_service::get_owned_games::OwnedGames, steam_id::SteamId, Steam};
+use rocket::{post, routes, serde::json::Json, http::Status, State};
+use steam_rs::{steam_user::get_player_summaries::Player, steam_id::SteamId, Steam};
 use rocket::serde::{Serialize, Deserialize};
 use crate::config::Config;
 
@@ -40,13 +39,24 @@ pub struct GamesInfo {
     pub owns_left4dead2: bool,
 }
 
-#[get("/userData/<steam_id>")]
-pub async fn get_user_data(steam_id: u64, config: &State<Config>) -> Result<Json<SteamUserDetails>, Status> {
+#[post("/userData", data = "<steam_id>")]
+pub async fn get_user_data(steam_id: String, config: &State<Config>) -> Result<Json<SteamUserDetails>, Status> {
     let steam = Steam::new(&config.steam_web_api_key);
 
-    // Request the player summaries of SteamID
-    let steam_ids = vec![SteamId::from(steam_id)];
+    // Parse the steam_id string to u64
+    let steam_id_u64: u64 = match steam_id.parse() {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("Invalid Steam ID format: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
 
+    // Create a SteamId from the u64
+    let steam_id_parsed = SteamId::new(steam_id_u64);
+    let steam_ids = vec![steam_id_parsed];
+
+    // Get player summaries
     match steam.get_player_summaries(steam_ids).await {
         Ok(response) => {
             if let Some(player) = response.first() {
@@ -63,12 +73,23 @@ pub async fn get_user_data(steam_id: u64, config: &State<Config>) -> Result<Json
     }
 }
 
-#[get("/games/<steam_id>")] //Just check if the user has L4D2 bought on his account
-pub async fn get_user_games(steam_id: u64, config: &State<Config>) -> Result<Json<GamesInfo>, Status> {
+#[post("/games", data = "<steam_id>")] //Just check if the user has L4D2 bought on his account
+pub async fn get_user_games(steam_id: String, config: &State<Config>) -> Result<Json<GamesInfo>, Status> {
     let steam = Steam::new(&config.steam_web_api_key);
-    let steam_id = SteamId::from(steam_id);
 
-    match steam.get_owned_games(steam_id, true, false, 550, false, None, "en", false).await {
+    // Parse the steam_id string to u64
+    let steam_id_u64: u64 = match steam_id.parse() {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("Invalid Steam ID format: {}", e);
+            return Err(Status::BadRequest);
+        }
+    };
+
+    // Create a SteamId from the u64
+    let steam_id_parsed = SteamId::new(steam_id_u64);
+
+    match steam.get_owned_games(steam_id_parsed, true, false, 550, false, None, "en", false).await {
         Ok(response) => {
             let mut owns_left4dead2 = false;
             for game in response.games {

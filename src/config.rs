@@ -32,7 +32,7 @@ impl Config {
                 newconf.with_general_section()
                     .set(";; The database.sqlite file path or file name if the database_relative_dir option is true. ", "")
                     .set("database_path", DATABASE_PATH)
-                    .set(";; Is the database in the same dir as the executable? If yes, don't forget to put just a file NAME in the database_path option.", "")
+                    .set(";; Is the database in the same dir as the executable? If yes, don't forget to put just a file NAME in the database_path option. ", "")
                     .set(";; False ", " any directory that the shell is already in")
                     .set("database_relative_dir", DATABASE_RELATIVE_DIR.to_string())
                     .set(";; Steam Web API key that will be utilized to fetch Steam user data (e.g. name, avatar, etc).", "")

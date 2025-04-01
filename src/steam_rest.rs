@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use rocket::{post, routes, serde::json::Json, http::Status, State};
+use rocket::{http::Status, options, post, routes, serde::json::Json, State};
 use steam_rs::{steam_user::get_player_summaries::Player, steam_id::SteamId, Steam};
 use rocket::serde::{Serialize, Deserialize};
 use crate::config::Config;
@@ -39,6 +39,8 @@ pub struct GamesInfo {
 	pub owns_left4dead2: bool,
 }
 
+// --- User Data ---
+
 #[post("/userData", data = "<steam_id>")]
 pub async fn get_user_data(steam_id: String, config: &State<Config>) -> Result<Json<SteamUserDetails>, Status> {
 	let steam = Steam::new(&config.steam_web_api_key);
@@ -72,6 +74,8 @@ pub async fn get_user_data(steam_id: String, config: &State<Config>) -> Result<J
 		}
 	}
 }
+
+// --- User's L4D2 posession state ---
 
 #[post("/games", data = "<steam_id>")] //Just check if the user has L4D2 bought on his account
 pub async fn get_user_games(steam_id: String, config: &State<Config>) -> Result<Json<GamesInfo>, Status> {
@@ -110,6 +114,21 @@ pub async fn get_user_games(steam_id: String, config: &State<Config>) -> Result<
 	}
 }
 
+// -- OPTIONS ---
+
+#[options("/userData")]
+pub async fn options_user_data() -> Status {
+	Status::Ok
+}
+
+#[options("/games")]
+pub async fn options_games() -> Status {
+	Status::Ok
+}
+
+
 pub fn mount_steam_routes() -> Vec<rocket::Route> {
-	routes![get_user_data, get_user_games]
+	routes![get_user_data, get_user_games,
+		// Options (Status => OK)
+		options_user_data, options_games]
 }

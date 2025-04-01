@@ -20,3 +20,10 @@ pub struct NewBindSuggestion<'a> {
 	pub text: &'a str,
 	pub proposed_by: &'a str,
 }
+
+#[derive(Insertable, Serialize, Deserialize, Debug)]
+#[serde(crate = "rocket::serde")]
+#[diesel(table_name = crate::schema::bind_suggestions)]
+pub struct DelBindSuggestion {
+	pub id: i32,
+}

@@ -7,9 +7,10 @@ use crate::databases::{
 	update_bind_by_id, update_bind_suggestion_by_id, update_command_by_id
 };
 use crate::db::database::DbPool;
-use crate::models::bind::{Bind, NewBind, BindVoting, NewBindVoting};
-use crate::models::bind_suggestion::{BindSuggestion, NewBindSuggestion};
-use crate::models::command::{Command, NewCommand};
+use crate::models::bind::{Bind, BindVoting, DelBind, DelBindVoting, NewBind, NewBindVoting};
+use crate::models::bind_suggestion::{BindSuggestion, DelBindSuggestion, NewBindSuggestion};
+use crate::models::command::{Command, DelCommand, NewCommand};
+use rocket::options;
 use rocket::{get, post, put, routes, serde::json::Json, State};
 use rocket::http::Status;
 
@@ -56,7 +57,7 @@ pub fn create_new_bind(
 #[post("/binds/deleteBind", data = "<bind_to_delete>")]
 pub fn delete_existing_bind(
 	db_pool: &State<DbPool>,
-	bind_to_delete: Json<Bind>,
+	bind_to_delete: Json<DelBind>,
 ) -> Result<Json<usize>, Status> {
 	delete_bind(db_pool, bind_to_delete.id)
 		.map(Json)
@@ -85,6 +86,21 @@ pub fn update_existing_bind(
 		_ => Status::InternalServerError,
 	}
 })
+}
+
+#[options("/binds/addBind")]
+pub fn options_create_new_bind() -> Status {
+    Status::Ok
+}
+
+#[options("/binds/deleteBind")]
+pub fn options_delete_existing_bind() -> Status {
+    Status::Ok
+}
+
+#[options("/binds/updateBind")]
+pub fn options_update_existing_bind() -> Status {
+    Status::Ok
 }
 
 // --- Bind Suggestions ---
@@ -132,7 +148,7 @@ pub fn create_new_bind_suggestion(
 #[post("/bind_suggestions/deleteBindSuggestion", data = "<bind_suggestion_to_delete>")]
 pub fn delete_existing_bind_suggestion(
 	db_pool: &State<DbPool>,
-	bind_suggestion_to_delete: Json<BindSuggestion>,
+	bind_suggestion_to_delete: Json<DelBindSuggestion>,
 ) -> Result<Json<usize>, Status> {
 	delete_bind_suggestion(db_pool, bind_suggestion_to_delete.id)
 		.map(Json)
@@ -161,6 +177,21 @@ pub fn update_existing_bind_suggestion(
 		_ => Status::InternalServerError,
 	}
 })
+}
+
+#[options("/bind_suggestions/addBindSuggestion")]
+pub fn options_create_new_bind_suggestion() -> Status {
+    Status::Ok
+}
+
+#[options("/bind_suggestions/deleteBindSuggestion")]
+pub fn options_delete_existing_bind_suggestion() -> Status {
+    Status::Ok
+}
+
+#[options("/bind_suggestions/updateBindSuggestion")]
+pub fn options_update_existing_bind_suggestion() -> Status {
+    Status::Ok
 }
 
 // --- Commands ---
@@ -206,9 +237,9 @@ pub fn create_new_command(
 #[post("/commands/deleteCommand", data = "<command_to_delete>")]
 pub fn delete_existing_command(
 	db_pool: &State<DbPool>,
-	command_to_delete: Json<Command>,
+	command_to_delete: Json<DelCommand>,
 ) -> Result<Json<usize>, Status> {
-	delete_command(db_pool, command_to_delete.id)
+	delete_command(db_pool, command_to_delete.into_inner().id)
 		.map(Json)
 		.map_err(|e| {
 	eprintln!("Database error: {:?}", e); // Log the error for debugging
@@ -235,6 +266,21 @@ pub fn update_existing_command(
 		_ => Status::InternalServerError,
 	}
 })
+}
+
+#[options("/commands/addCommand")]
+pub fn options_create_new_command() -> Status {
+    Status::Ok
+}
+
+#[options("/commands/deleteCommand")]
+pub fn options_delete_existing_command() -> Status {
+    Status::Ok
+}
+
+#[options("/commands/updateCommand")]
+pub fn options_update_existing_command() -> Status {
+    Status::Ok
 }
 
 // --- Bind Votings ---
@@ -280,7 +326,7 @@ pub fn create_new_bind_voting(
 #[post("/bind_votings/deleteBindVoting", data = "<bind_voting_to_delete>")]
 pub fn delete_existing_bind_voting(
 	db_pool: &State<DbPool>,
-	bind_voting_to_delete: Json<BindVoting>,
+	bind_voting_to_delete: Json<DelBindVoting>,
 ) -> Result<Json<usize>, Status> {
 	delete_bind_voting(db_pool, bind_voting_to_delete.id)
 		.map(Json)
@@ -294,7 +340,17 @@ pub fn delete_existing_bind_voting(
 })
 }
 
-//By ID
+#[options("/bind_votings/addBindVoting")]
+pub fn options_create_new_bind_voting() -> Status {
+    Status::Ok
+}
+
+#[options("/bind_votings/deleteBindVoting")]
+pub fn options_delete_existing_bind_voting() -> Status {
+    Status::Ok
+}
+
+// -- By ID
 #[put("/binds/<bind_id>", data = "<bind_to_update>")]
 pub fn update_existing_bind_by_id(
 	db_pool: &State<DbPool>,
@@ -352,6 +408,7 @@ pub fn update_existing_command_by_id(
 // --- Mount the routes in REST.rs ---
 pub fn mount_database_routes() -> Vec<rocket::Route> {
 	routes![
+		// Binds
 		get_bind_by_id,
 		get_bind_suggestion_by_id,
 		get_command_by_id,
@@ -360,19 +417,35 @@ pub fn mount_database_routes() -> Vec<rocket::Route> {
 		create_new_bind,
 		delete_existing_bind,
 		update_existing_bind,
+		// Bind suggestions
 		get_all_bind_suggestions,
 		create_new_bind_suggestion,
 		delete_existing_bind_suggestion,
 		update_existing_bind_suggestion,
+		// Commands
 		get_all_commands,
 		create_new_command,
 		delete_existing_command,
 		update_existing_command,
+		// Bind votings
 		get_all_bind_votings,
 		create_new_bind_voting,
 		delete_existing_bind_voting,
+		// ... By ID
 		update_existing_bind_by_id,
 		update_existing_bind_suggestion_by_id,
 		update_existing_command_by_id,
+		// Options (Status => OK)
+		options_create_new_bind,
+        options_delete_existing_bind,
+        options_update_existing_bind,
+        options_create_new_bind_suggestion,
+        options_delete_existing_bind_suggestion,
+        options_update_existing_bind_suggestion,
+        options_create_new_command,
+        options_delete_existing_command,
+        options_update_existing_command,
+        options_create_new_bind_voting,
+        options_delete_existing_bind_voting,
 	]
 }

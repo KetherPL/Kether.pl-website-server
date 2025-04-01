@@ -18,3 +18,10 @@ pub struct NewCommand<'a> {
     pub command: &'a str,
     pub description: &'a str,
 }
+
+#[derive(Insertable, Serialize, Deserialize, Debug)]
+#[serde(crate = "rocket::serde")]
+#[diesel(table_name = crate::schema::commands)]
+pub struct DelCommand {
+    pub id: i32,
+}

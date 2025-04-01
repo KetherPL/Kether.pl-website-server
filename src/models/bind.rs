@@ -19,6 +19,13 @@ pub struct NewBind<'a> {
     pub text: &'a str,
 }
 
+#[derive(Insertable, Serialize, Deserialize, Debug)]
+#[serde(crate = "rocket::serde")]
+#[diesel(table_name = crate::schema::binds)]
+pub struct DelBind {
+    pub id: i32,
+}
+
 #[derive(Queryable, Selectable, Serialize, Deserialize, Debug)]
 #[serde(crate = "rocket::serde")]
 #[diesel(table_name = crate::schema::bind_votings)]
@@ -37,4 +44,11 @@ pub struct NewBindVoting<'a> {
     pub voter_steam_id: &'a str,
     pub voted_bind_id: &'a str,
     pub vote: &'a str,
+}
+
+#[derive(Insertable, Serialize, Deserialize, Debug)]
+#[serde(crate = "rocket::serde")]
+#[diesel(table_name = crate::schema::bind_votings)]
+pub struct DelBindVoting {
+    pub id: i32,
 }

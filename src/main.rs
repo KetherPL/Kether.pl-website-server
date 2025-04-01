@@ -14,7 +14,7 @@ mod db;
 mod models;
 mod schema;
 mod steam_rest;
-
+mod sat_specific_rest;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

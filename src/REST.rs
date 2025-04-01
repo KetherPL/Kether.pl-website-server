@@ -34,5 +34,6 @@ pub fn rocket() -> _ {
 		.mount("/api/LiveServerInfo", routes![live_server_info, live_server_info_kether])
 		.mount("/api", mount_database_routes())
 		.mount("/api/steam", mount_steam_routes()) // Mount the new steam routes
+		.mount("/", crate::sat_specific_rest::mount_sat_specific_routes())
 		.attach(cors)
 }

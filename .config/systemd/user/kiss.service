@@ -1,0 +1,10 @@
+[Service]
+Type=forking
+Restart=on-failure
+TimeoutSec=1min
+IgnoreSIGPIPE=no
+GuessMainPID=yes
+RemainAfterExit=no
+WorkingDirectory=%h/Kether_Internal_Services
+Description=Kether Internal Services Server (kether.pl backend)
+ExecStart=screen -d -m -S Kether_Internal_Services_Server ./Kether_Internal_Services_Server -s

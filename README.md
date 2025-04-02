@@ -66,7 +66,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
     cd Kether.pl-website-server
     ```
 3.  **Create `KISS.ini`:** Create a `KISS.ini` file in the project's root directory (or it will be created automatically on first run).
-    *   Set the `database_path` to the desired location of your SQLite database file.
+    *   Set the `database_path` to the desired location and name of your SQLite database file.
     *   Set `database_relative_dir` to `true` if the database is in the same directory as the executable.
     *   Obtain a Steam Web API key from Steam and set it in `steam_web_api_key`.
 4.  **Run Database Migrations:**

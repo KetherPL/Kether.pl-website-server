@@ -1,6 +1,6 @@
 [package]
 name = "Kether_Internal_Services_Server"
-version = "0.0.1"
+version = "0.0.1" #Rolling release... I don't mind changing this in future
 edition = "2024"
 authors = ["Dominik Adrian Grzywak <starterx4@gmail.com>"]
 description = "Internal Services Server for the Kether L4D2 server website"

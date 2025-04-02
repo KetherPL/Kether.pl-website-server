@@ -15,11 +15,11 @@ pub struct SimpleResponse {
     message: String,
 }
 
-// Custom guard to extract the client's IP address and the full requested path
+// Custom guard to extract the malicious bot's IP address, the full requested path and the UA
 pub struct ClientInfo {
     pub ip: Option<IpAddr>,
     pub path: String,
-	pub ua: String,
+	// pub ua: String,
 }
 
 #[rocket::async_trait]
@@ -73,9 +73,9 @@ impl<'r> FromRequest<'r> for ClientInfo {
 
         // Get the full requested path
         let path = request.uri().path().to_string();
-		let ua = request.headers().get_one("User-Agent").unwrap_or("Unknown").to_string();
+		// let ua = request.headers().get_one("User-Agent").unwrap_or("Unknown").to_string();
 
-        Outcome::Success(ClientInfo { ip, path, ua })
+        Outcome::Success(ClientInfo { ip, path, /* ua */ })
     }
 }
 
@@ -87,13 +87,16 @@ fn log_suspect(info: &ClientInfo) -> io::Result<()> {
         .open(log_path)?;
 
     if let Some(ip) = info.ip {
-        writeln!(file, "Suspect IP: {} | Path: {} | UA: {}", ip, info.path, info.ua)?;
+        writeln!(file, "Suspect IP: {} | Path: {}", ip, info.path, /* info.ua */)?;
     } else {
-        writeln!(file, "Suspect IP: Unknown | Path: {} | UA: {}", info.path, info.ua)?;
+        writeln!(file, "Suspect IP: Unknown | Path: {}", info.path, /* info.ua */)?;
+        // writeln!(file, "Suspect IP: Unknown | Path: {} | UA: {}", info.path, info.ua)?;
     }
 
     Ok(())
 }
+
+// --- Let's say "hello" to the malicious bots originating mostly from Russia ---
 
 #[get("/phpmyadmin/<_..>")]
 pub fn phpmyadmin(client_info: ClientInfo) -> Result<RawText<String>, Status> {
@@ -131,7 +134,7 @@ pub fn wpadmin(client_info: ClientInfo) -> Result<RawText<String>, Status> {
     Ok(RawText("Иди нахуй!".to_string()))
 }
 
-// --- Redirect from root path to our frontend
+// --- Redirect the root path to our frontend
 #[get("/")]
 pub fn redirect_to_kether() -> Redirect {
     Redirect::to("https://kether.pl")

@@ -1,6 +1,6 @@
 # Kether.pl Website Server
 
-This project is the backend server for the Kether.pl website, a homepage for the Polish community-driven Left 4 Dead 2 ZoneMod-based server. It's built using Rust and leverages various libraries for web services, game server querying, and database management.
+This project is the backend server for the Kether.pl website, a homepage for the Polish community-driven [Left 4 Dead 2 ZoneMod-based server](https://github.com/Krevik/Kether.pl-L4D2-Server). It's built using Rust and leverages various libraries for web services, game server querying, and database management.
 
 ## Features
 

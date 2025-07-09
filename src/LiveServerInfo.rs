@@ -63,9 +63,10 @@ pub fn live_server_info(ip: String, port: u16) -> Result<Json<L4D2ServerInfo>, S
 pub fn live_server_info_kether() -> Result<Json<L4D2ServerInfo>, String> {
 	/* Hardcoded for simplicity, in a real-world application, 
 	  this should be fetched from a configuration file or a database.
-	  LiveServer-hosted Kether.pl L4D2 server as of 2025.
+	  OVH-hosted Kether.pl L4D2 server as of July 2025.
+	  LiveServer.pl hosting unfortunately died at the end of June 2025 :(
 	*/
-	let response = l4d2::query(&"51.83.217.86".parse().unwrap(), Some(29800));
+	let response = l4d2::query(&"54.36.179.182".parse().unwrap(), Some(27015));
 
 	match response { // Result type, must check what it is...
 		Err(error) => Err(format!("Couldn't query, error: {}", error)),

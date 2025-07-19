@@ -28,7 +28,6 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   Provides a comprehensive set of API endpoints for interacting with the server's features.
     *   Supports CORS (Cross-Origin Resource Sharing) to allow requests from the Kether.pl frontend (running on `localhost:3000` and `kether.pl`).
 *   **Security:**
-    *   Includes basic bot detection by logging requests to common attack paths (e.g., `/phpmyadmin`, `/wordpress`, `/.git`).
     *   Redirects root path (`/`) to the Kether.pl frontend.
 *   **Configuration:**
     *   Uses an `KISS.ini` configuration file to manage settings like:
@@ -42,7 +41,6 @@ This project is the backend server for the Kether.pl website, a homepage for the
     * Robust error handling for database operations, Steam API calls, and game server queries.
     * Returns appropriate HTTP status codes (e.g., 404 Not Found, 400 Bad Request, 500 Internal Server Error) for API requests.
 * **Logging:**
-    * Logs suspect IP addresses and paths to `suspects.log` for potential bot activity.
     * Logs database errors to the console for debugging.
 
 ## Dependencies

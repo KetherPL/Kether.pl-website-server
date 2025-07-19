@@ -2,30 +2,50 @@
 
 #![allow(non_snake_case)]
 use clap::{Parser, Subcommand};
+#[cfg(feature = "server_query")]
 use gamedig::games::l4d2;
 use std::thread;
 
+#[cfg(all(feature = "server_query", feature = "rest_api"))]
 mod LiveServerInfo;
+
+#[cfg(feature = "rest_api")]
 mod REST;
+
+#[cfg(feature = "cfg")]
 mod config;
+
+#[cfg(feature = "rest_sqlite")]
 mod databases;
+#[cfg(feature = "rest_sqlite")]
 mod databases_rest;
+#[cfg(feature = "rest_sqlite")]
 mod db;
+#[cfg(feature = "rest_sqlite")]
 mod models;
+#[cfg(feature = "rest_sqlite")]
 mod schema;
+
+#[cfg(feature = "rest_steam")]
 mod steam_rest;
+
+#[cfg(feature = "sat")]
 mod sat_specific_rest;
+
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
 	/// Start the RESTful server service
+	#[cfg(feature = "rest_api")]
 	#[arg(short, long)]
 	service: bool,
+	#[cfg(feature = "server_query")]
 	#[command(subcommand)]
 	command: Option<Commands>,
 }
 
+#[cfg(feature = "server_query")]
 #[derive(Subcommand)]
 enum Commands {
 	/// -i <IP address> -p <PORT>   Prints selected server query to the CLI/terminal
@@ -40,6 +60,7 @@ enum Commands {
 fn main() {
 	let args = Args::parse();
 
+	#[cfg(feature = "rest_api")]
 	if args.service {
 		println!("Starting internal services server service");
 		// :: Start the internal services server ::
@@ -57,6 +78,7 @@ fn main() {
 		//... TODO
 	}
 
+	#[cfg(feature = "server_query")]
 	match &args.command {
 		Some(Commands::Query { ip, port }) => {
 			query_l4d2_server(&ip, *port);
@@ -69,6 +91,7 @@ fn main() {
 	}
 }
 
+#[cfg(feature = "server_query")]
 fn query_l4d2_server(ip: &str, port: u16) {
 
 	// Get the IP address and port from command line arguments

@@ -32,6 +32,8 @@ mod steam_rest;
 #[cfg(feature = "sat")]
 mod sat_specific_rest;
 
+#[cfg(feature = "rest_call_for_sub")]
+mod call_for_sub_rest;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

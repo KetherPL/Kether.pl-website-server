@@ -15,6 +15,7 @@ pub fn rocket() -> _ {
 		"http://localhost:80",   // Web Browser testing the paths and api
 		"https://kether.pl",
 		"http://kether.pl", // Unencrypted HTTP shouldn't really happen, but allow it just in case... Just don't break the website when it happens
+		"http://54.36.179.182", // L4D2 server calling for sub through Rest in Pawn
 	]);
 
 	let cors = CorsOptions {
@@ -34,6 +35,7 @@ pub fn rocket() -> _ {
 		.mount("/api/LiveServerInfo", routes![live_server_info, live_server_info_kether])
 		.mount("/api", mount_database_routes())
 		.mount("/api/steam", mount_steam_routes()) // Mount the new steam routes
+		.mount("/api/callForSub", crate::call_for_sub_rest::mount_callForSub_routes())
 		.mount("/", crate::sat_specific_rest::mount_sat_specific_routes())
 		.attach(cors)
 }

@@ -12,12 +12,15 @@ homepage = "kether.pl"
 clap = { version = "4.5.32", features = ["derive", "std"] }
 colored = { version = "3.0.0", optional = true }
 diesel = { version = "2.2.8", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"], optional = true }
+edon = { path = "edon-0.0.17", optional = true } #version = "0.0.17"
 gamedig = { version = "0.6.1", optional = true }
+libloading = "0.8.8"
 rocket = { version = "0.5.1", features = ["json"], optional = true }
 rocket_cors = { version = "0.6.0", optional = true }
 rust-ini = { version = "0.21.1", features = ["inline-comment"], optional = true }
 serde_json = "1.0.140"
-steam-rs = { version = "0.5.1", optional = true}
+steam-rs = { version = "0.5.1", optional = true }
+tokio = { version = "1.46.1", features = ["rt-multi-thread", "macros"] }
 
 # The default release profile. It contains all optimizations, without
 # sacrificing debug info. With this profile (like in the standard
@@ -33,6 +36,10 @@ default = ["kether_meta", "sat"] # Features starter pack
         rest_sqlite = ["cfg", "rest_api", "dep:diesel"] # REST API – database part for website (binds, bind suggestions, commands)
         rest_steam = ["cfg", "rest_api", "dep:steam-rs"] # REST API – Steam part for website (fetch userdata, check if owns appid=550 (L4D2))
         server_query = ["dep:gamedig"] # Query L4D2 servers (either through CLI or REST API)
-        rest_call_for_sub = ["cfg", "rest_api"] # REST API – Uses NodeJS to post `!sub` requests on the Steam Group Chat
+        rest_call_for_sub = ["cfg", "rest_api", "dep:edon"] # REST API – Uses NodeJS to post `!sub` requests on the Steam Group Chat
             cfg = ["dep:colored", "dep:rust-ini"] # KISS.ini config – database file path, Steam Web API key
             rest_api = ["dep:rocket", "dep:rocket_cors"] # Base REST API support
+
+[[bin]]
+name = "debug_edon"
+path = "debug_edon.rs"

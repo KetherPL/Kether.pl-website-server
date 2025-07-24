@@ -1,18 +1,38 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+#[cfg(feature = "rest_call_for_sub")]
+use std::sync::Arc;
+
 #[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub"))]
 use crate::config::Config;
+#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub"))]
+use edon::{self, Nodejs};
 #[cfg(feature = "rest_sqlite")]
 use crate::databases_rest::mount_database_routes;
 #[cfg(feature = "server_query")]
 use crate::LiveServerInfo::{live_server_info, live_server_info_kether};
 #[cfg(feature = "rest_steam")]
 use crate::steam_rest::mount_steam_routes;
-use rocket::{launch, routes, Build, Rocket};
+use rocket::{routes, Build, Rocket};
 use rocket_cors::{AllowedOrigins, CorsOptions};
 
-#[launch]
-pub fn rocket() -> Rocket<Build> {
+// Add this function to accept Node.js instance
+#[cfg(feature = "rest_call_for_sub")]
+pub async fn main_with_nodejs(nodejs_instance: Arc<Nodejs>) -> Result<(), rocket::Error> {
+	let rocket = rocket(Some(nodejs_instance));
+	rocket.launch().await?;
+	Ok(())
+}
+
+// Regular main function for when Node.js is not needed
+pub async fn _main() -> Result<(), rocket::Error> {
+	let rocket = rocket(None);
+	rocket.launch().await?;
+	Ok(())
+}
+
+//#[launch]
+pub fn rocket(nodejs_instance: Option<Arc<Nodejs>>) -> Rocket<Build> {
 	// Configure CORS
 	let allowed_origins = AllowedOrigins::some_exact(&[
 		"http://localhost:3000", // Local Kether website 'npm run start'
@@ -23,7 +43,7 @@ pub fn rocket() -> Rocket<Build> {
 	]);
 
 	let cors = CorsOptions {
-		allowed_origins,
+		// allowed_origins,
 		..Default::default()
 	}
 	.to_cors()
@@ -55,6 +75,9 @@ pub fn rocket() -> Rocket<Build> {
 	#[cfg(feature = "rest_call_for_sub")]
 	{
 		rocket_build = rocket_build.mount("/api/callForSub", crate::call_for_sub_rest::mount_callForSub_routes());
+		if let Some(node) = nodejs_instance {
+			rocket_build = rocket_build.manage(node);
+		}
 	}
 	#[cfg(feature = "sat")]
 	{

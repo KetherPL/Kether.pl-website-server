@@ -5,7 +5,7 @@ use rocket::{get, routes};
 
 // --- Redirect the root path to our frontend
 #[get("/")]
-pub fn redirect_to_kether() -> Redirect {
+pub async fn redirect_to_kether() -> Redirect {
     Redirect::to("https://kether.pl")
 }
 

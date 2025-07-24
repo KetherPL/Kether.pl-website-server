@@ -15,6 +15,7 @@ dependencies = [
  "rust-ini",
  "serde_json",
  "steam-rs",
+ "tokio",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@
 use clap::{Parser, Subcommand};
 #[cfg(feature = "server_query")]
 use gamedig::games::l4d2;
-use std::thread;
+use tokio::{task::{spawn, spawn_blocking}, time::{sleep, Duration}};
 
 #[cfg(all(feature = "server_query", feature = "rest_api"))]
 mod LiveServerInfo;
@@ -59,7 +59,8 @@ enum Commands {
 	}
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
 	let args = Args::parse();
 
 	#[cfg(feature = "rest_api")]
@@ -67,14 +68,14 @@ fn main() {
 		println!("Starting internal services server service");
 		// :: Start the internal services server ::
 		// Start the LiveServerInfo RESTful service
-		thread::spawn(move || {
-			REST::main();
+		spawn(async {
+			let _ = spawn_blocking(move || REST::main()).await;
 			std::process::exit(0);
 		});
 		// Keep the main thread alive so the server thread can run
 		// Without this, the main thread exits immediately, killing the server thread.
 		loop {
-			thread::sleep(std::time::Duration::from_secs(1));
+			sleep(Duration::from_secs(1)).await;
 		}
 
 		//... TODO

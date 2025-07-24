@@ -47,9 +47,13 @@ pub async fn call_for_sub(payload: Json<CallForSubPayload>, config: &State<Confi
 			Err(Status::InternalServerError)
 		}
 	};
-    println!("Call for sub from: {}", caller_name?);
+    println!("Call for sub from: {}", caller_name.clone()?);
     let acc_id = SteamId::get_account_id(&steam_id_parsed);
     println!("Account ID: {}", acc_id);
+	let sub_msg: String = format!("[mention={}]@{}[/mention] called for a sub, [mention=here]@online[/mention]", acc_id, caller_name?);
+    println!("Message: {}", sub_msg);
+	
+	//... TODO
     Ok(())
 }
 

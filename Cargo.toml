@@ -29,7 +29,7 @@ strip = true
 
 [features]
 default = ["kether_meta", "sat"] # Features starter pack
-    kether_meta = ["rest_sqlite", "rest_steam", "server_query", "rest_call_for_sub"] # Meta package for Kether's needs
+    kether_meta = ["rest_sqlite", "rest_steam", "server_query"] # Meta package for Kether's needs
     sat = ["rest_api"] # Satanixon's/StarterX4's-specific features ¯\_(ツ)_/¯
         rest_sqlite = ["cfg", "rest_api", "dep:diesel"] # REST API – database part for website (binds, bind suggestions, commands)
         rest_steam = ["cfg", "rest_api", "dep:steam-rs"] # REST API – Steam part for website (fetch userdata, check if owns appid=550 (L4D2))

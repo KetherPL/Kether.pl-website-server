@@ -3,7 +3,7 @@
 #![allow(non_snake_case)]
 use clap::{Parser, Subcommand};
 #[cfg(feature = "server_query")]
-use gamedig::games::l4d2;
+use gamedig::games::l4d2::query;
 use tokio::{task::{spawn, spawn_blocking}, time::{sleep, Duration}};
 
 #[cfg(all(feature = "server_query", feature = "rest_api"))]
@@ -83,27 +83,45 @@ async fn main() {
 
 	#[cfg(feature = "server_query")]
 	match &args.command {
-		Some(Commands::Query { ip, port }) => {
-			query_l4d2_server(&ip, *port);
+		Some(Commands::Query {ip, port}) => {
+			match query_l4d2_server(&ip, *port).await {
+                Ok(response) => {
+                    println!("Query successful: {:?}", response);
+                },
+                Err(e) => {
+                    eprintln!("Error querying server: {}", e);
+                }
+            }
 		}
 		None => {
 			if !args.service {
-				eprintln!("No command nor argument specified!");
+				eprintln!("No command nor argument specified! \n Please use -h or --help for more information.");
 			}
 		}
 	}
 }
 
 #[cfg(feature = "server_query")]
-fn query_l4d2_server(ip: &str, port: u16) {
-
+async fn query_l4d2_server(ip: &str, port: u16) -> Result<(), String> {
 	// Get the IP address and port from command line arguments
 
-	let response = l4d2::query(&ip.parse().unwrap(), Some(port));
+	// Attempt to parse the IP address. If it fails, return an error.
+    let parsed_ip = match ip.parse() {
+        Ok(addr) => addr,
+        Err(_) => return Err(format!("Invalid IP address: {}", ip)),
+    };
+
+    // Query the L4D2 server using the parsed IP and specified port.
+    let response = query(&parsed_ip, Some(port));
 	// None is the default port (which is 27015), could also be Some(27015)
 
-	match response { // Result type, must check what it is...
-		Err(error) => println!("Couldn't query, error: {}", error),
-		Ok(r) => println!("{:#?}", r)
-	}
+    if let Err(error) = response {
+        return Err(format!("Couldn't query, error: {}", error));
+    }
+
+    if let Ok(r) = response {
+        println!("{:#?}", r);
+    }
+
+    Ok(())
 }

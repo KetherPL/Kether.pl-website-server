@@ -11,6 +11,49 @@ use crate::steam_rest::mount_steam_routes;
 use rocket::{launch, routes, Build, Rocket};
 use rocket_cors::{AllowedOrigins, CorsOptions};
 
+/// Launches the Rocket web server with all configured routes and middleware
+/// 
+/// This function is the main entry point for the REST API server. It configures
+/// the Rocket web framework with CORS settings, port configuration, and all
+/// available routes based on the enabled features.
+/// 
+/// # Features
+/// * `rest_steam` - Mounts Steam-related REST endpoints
+/// * `rest_call_for_sub` - Mounts call-for-sub REST endpoints
+/// * `rest_sqlite` - Mounts database REST endpoints and manages database connection pool
+/// * `server_query` - Mounts LiveServerInfo REST endpoints
+/// * `sat` - Mounts Satanixon-specific REST endpoints
+/// 
+/// # Configuration
+/// * **Port**: 3001 (configured for NodeJS/React compatibility)
+/// * **CORS**: Configured for localhost, kether.pl, and specific IP addresses
+/// * **Database**: SQLite connection pool (if rest_sqlite feature enabled)
+/// * **Config**: Loads and manages application configuration
+/// 
+/// # CORS Origins
+/// * `http://localhost:3000` - Local Kether website development
+/// * `http://localhost:80` - Web browser testing
+/// * `https://kether.pl` - Production HTTPS
+/// * `http://kether.pl` - Production HTTP (fallback)
+/// * `http://54.36.179.182` - L4D2 server for sub requests
+/// 
+/// # Routes
+/// * `/api` - Database REST endpoints (if rest_sqlite enabled)
+/// * `/api/LiveServerInfo` - Server query endpoints (if server_query enabled)
+/// * `/api/steam` - Steam REST endpoints (if rest_steam enabled)
+/// * `/api/callForSub` - Call-for-sub endpoints (if rest_call_for_sub enabled)
+/// * `/` - Satanixon-specific endpoints (if sat enabled)
+/// 
+/// # Example
+/// ```rust
+/// #[launch]
+/// fn rocket() -> Rocket<Build> {
+///     // This function is automatically called by Rocket
+/// }
+/// ```
+/// 
+/// # Returns
+/// A configured Rocket instance ready to launch
 #[launch]
 pub fn rocket() -> Rocket<Build> {
 	// Configure CORS

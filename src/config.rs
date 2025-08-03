@@ -4,11 +4,45 @@ use ini::Ini;
 use std::{path::PathBuf, fmt};
 use colored::Colorize;
 
-pub const CONF_FILE_NAME: &str = "KISS.ini"; // Config name (must be in the same dir as executable, or in it's subdir)
-pub const DATABASE_PATH: &str = "kether.sqlite"; // Hardcoded in case if DB_PATH env var would be unavailable
-pub const DATABASE_RELATIVE_DIR: bool = true; /* Is the database in the same dir as the executable?
-										If yes, just put a file NAME in the DATABASE_PATH */
+/// Configuration file name constant
+/// 
+/// The name of the configuration file that must be in the same directory
+/// as the executable or in its subdirectory.
+pub const CONF_FILE_NAME: &str = "KISS.ini";
 
+/// Default database path constant
+/// 
+/// Hardcoded database path in case the DB_PATH environment variable
+/// would be unavailable. Used as fallback for database configuration.
+pub const DATABASE_PATH: &str = "kether.sqlite";
+
+/// Database relative directory setting
+/// 
+/// Determines if the database is in the same directory as the executable.
+/// If true, just put a file NAME in the DATABASE_PATH.
+/// If false, use any directory that the shell is already in.
+pub const DATABASE_RELATIVE_DIR: bool = true;
+
+/// Configuration structure for the Kether Internal Services Server
+/// 
+/// This struct holds all configuration values loaded from the KISS.ini file.
+/// It provides a centralized way to access all application settings.
+/// 
+/// # Fields
+/// * `database_path` - Path to the SQLite database file
+/// * `database_relative_dir` - Whether the database path is relative to executable
+/// * `steam_web_api_key` - Steam Web API key for fetching user data
+/// * `chat_group_id` - Steam group ID for chat functionality
+/// * `chat_id` - Steam chat ID for message sending
+/// * `steam_account` - Steam account username for bot login
+/// * `steam_password` - Steam account password for bot login
+/// 
+/// # Example
+/// ```rust
+/// let config = Config::load()?;
+/// println!("Database path: {}", config.database_path);
+/// println!("Steam API key: {}", config.steam_web_api_key);
+/// ```
 #[derive(Debug)]
 pub struct Config {
 	pub database_path: String,
@@ -21,6 +55,33 @@ pub struct Config {
 }
 
 impl Config {
+	/// Loads configuration from the KISS.ini file
+	/// 
+	/// This function reads the configuration file and creates a Config struct
+	/// with all the necessary settings. If the config file doesn't exist,
+	/// it creates a new one with default values.
+	/// 
+	/// The function performs the following operations:
+	/// 1. Locates the KISS.ini file in the executable directory
+	/// 2. Loads existing configuration or creates a new one
+	/// 3. Validates and adds missing configuration keys
+	/// 4. Parses all values into the appropriate types
+	/// 5. Returns a Config struct with all settings
+	/// 
+	/// # Returns
+	/// * `Ok(Config)` - Successfully loaded configuration
+	/// * `Err(Box<dyn std::error::Error>)` - If loading or parsing fails
+	/// 
+	/// # Example
+	/// ```rust
+	/// match Config::load() {
+	///     Ok(config) => {
+	///         println!("Configuration loaded successfully");
+	///         // Use config.database_path, config.steam_web_api_key, etc.
+	///     },
+	///     Err(e) => eprintln!("Failed to load config: {}", e),
+	/// }
+	/// ```
 	pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
 		let conf_path = exe_dir()?.join(CONF_FILE_NAME);
 
@@ -127,6 +188,23 @@ impl Config {
 	}
 }
 
+/// Gets the directory containing the current executable
+/// 
+/// This function determines the directory where the current executable
+/// is located. This is used to locate the configuration file and other
+/// resources relative to the executable.
+/// 
+/// # Returns
+/// * `Ok(PathBuf)` - The directory containing the executable
+/// * `Err(Box<dyn std::error::Error>)` - If the executable path cannot be determined
+/// 
+/// # Example
+/// ```rust
+/// match exe_dir() {
+///     Ok(dir) => println!("Executable directory: {:?}", dir),
+///     Err(e) => eprintln!("Failed to get executable directory: {}", e),
+/// }
+/// ```
 pub fn exe_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 	match std::env::current_exe() {
 		Ok(exe_path) => {
@@ -146,9 +224,27 @@ pub fn exe_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 	}
 }
 
+/// Custom error type for quiet error handling
+/// 
+/// This struct provides a simple error type that can hold an optional
+/// error message. It's used for error handling where detailed error
+/// information is not required.
+/// 
+/// # Fields
+/// * `0` - Optional error message string
 #[derive(Debug)]
 pub struct QuietErr(Option<String>);
+
 impl fmt::Display for QuietErr {
+	/// Formats the error for display
+	/// 
+	/// Returns the error message if present, or an empty string if not.
+	/// 
+	/// # Arguments
+	/// * `f` - The formatter to write to
+	/// 
+	/// # Returns
+	/// * `fmt::Result` - The result of the formatting operation
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		if let Some(ref msg) = self.0 {
 			write!(f, "{}", msg)
@@ -157,4 +253,5 @@ impl fmt::Display for QuietErr {
 		}
 	}
 }
+
 impl std::error::Error for QuietErr {}

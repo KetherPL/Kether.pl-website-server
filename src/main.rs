@@ -2,9 +2,9 @@
 
 #![allow(non_snake_case)]
 use clap::{Parser, Subcommand};
+use tokio::{task::{spawn, spawn_blocking}, time::{sleep, Duration}};
 #[cfg(feature = "server_query")]
 use gamedig::games::l4d2::query;
-use tokio::{task::{spawn, spawn_blocking}, time::{sleep, Duration}};
 
 #[cfg(all(feature = "server_query", feature = "rest_api"))]
 mod LiveServerInfo;
@@ -34,6 +34,8 @@ mod sat_specific_rest;
 
 #[cfg(feature = "rest_call_for_sub")]
 mod call_for_sub_rest;
+#[cfg(feature = "rest_call_for_sub")]
+mod SteamBot;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -71,6 +73,12 @@ async fn main() {
 		spawn(async {
 			let _ = spawn_blocking(move || REST::main()).await;
 			std::process::exit(0);
+		});
+		// Start the SteamBot
+		spawn(async {
+			if let Err(e) = SteamBot::main().await {
+				eprintln!("SteamBot error: {}", e);
+			}
 		});
 		// Keep the main thread alive so the server thread can run
 		// Without this, the main thread exits immediately, killing the server thread.

@@ -14,6 +14,10 @@ pub struct Config {
 	pub database_path: String,
 	pub database_relative_dir: bool,
 	pub steam_web_api_key: String,
+	pub chat_group_id: u64,
+	pub chat_id: u64,
+	pub steam_account: String,
+	pub steam_password: String,
 }
 
 impl Config {
@@ -36,7 +40,13 @@ impl Config {
 					.set(";; False ", " any directory that the shell is already in")
 					.set("database_relative_dir", DATABASE_RELATIVE_DIR.to_string())
 					.set(";; Steam Web API key that will be utilized to fetch Steam user data (e.g. name, avatar, etc).", "")
-					.set("steam_web_api_key", "");
+					.set("steam_web_api_key", "")
+					.set(";; Group ID and Chat ID that will be utilized to access the selected Steam Group Chat (for posting !sub)", "")
+					.set("chat_group_id", "")
+					.set("chat_id", "")
+					.set(";; Steam account login data for the bot instance (for posting !sub)", "")
+					.set("steam_account", "")
+					.set("steam_password", "");
 				newconf.write_to_file(&conf_path)?;
 				newconf
 			}
@@ -63,6 +73,30 @@ impl Config {
 				sec.insert("steam_web_api_key", "");
 				changed = true;
 			}
+
+			if !sec.contains_key("chat_group_id") {
+				eprintln!("Key 'chat_group_id' not found in {}. Adding...", CONF_FILE_NAME);
+				sec.insert("chat_group_id", "");
+				changed = true;
+			}
+
+			if !sec.contains_key("chat_id") {
+				eprintln!("Key 'chat_id' not found in {}. Adding...", CONF_FILE_NAME);
+				sec.insert("chat_id", "");
+				changed = true;
+			}
+
+			if !sec.contains_key("steam_account") {
+				eprintln!("Key 'steam_account' not found in {}. Adding...", CONF_FILE_NAME);
+				sec.insert("steam_account", "");
+				changed = true;
+			}
+
+			if !sec.contains_key("steam_password") {
+				eprintln!("Key 'steam_password' not found in {}. Adding...", CONF_FILE_NAME);
+				sec.insert("steam_password", "");
+				changed = true;
+			}
 		} // sec goes out of scope here, releasing the mutable borrow
 
 		if changed {
@@ -75,12 +109,20 @@ impl Config {
 		let db_path = sec.get("database_path").unwrap().to_string();
 		let db_relative_dir = sec.get("database_relative_dir").unwrap().parse::<bool>().unwrap();
 		let steam_web_api_key = sec.get("steam_web_api_key").unwrap().to_string();
+		let chat_group_id = sec.get("chat_group_id").unwrap().parse::<u64>().unwrap_or(0);
+		let chat_id = sec.get("chat_id").unwrap().parse::<u64>().unwrap_or(0);
+		let steam_account = sec.get("steam_account").unwrap().to_string();
+		let steam_password = sec.get("steam_password").unwrap().to_string();
 		
 
 		Ok(Config {
 			database_path: db_path,
 			database_relative_dir: db_relative_dir,
 			steam_web_api_key,
+			chat_group_id,
+			chat_id,
+			steam_account,
+			steam_password,
 		})
 	}
 }

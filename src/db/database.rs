@@ -14,7 +14,11 @@ fn db_path() -> Result<PathBuf, ParseError> {
 			Config {
 				database_path: DATABASE_PATH.to_string(),
 				database_relative_dir: DATABASE_RELATIVE_DIR,
-				steam_web_api_key: "".to_string(),               
+				steam_web_api_key: "".to_string(),
+				chat_group_id: 0,
+				chat_id: 0,
+				steam_account: "".to_string(),
+				steam_password: "".to_string(),
 			}
 		}
 	};

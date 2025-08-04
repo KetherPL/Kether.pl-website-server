@@ -4,9 +4,10 @@ use crate::config::Config;
 use SC_Sub_Poster::{LogOn, ChatRoomClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use once_cell::sync::OnceCell;
 
-// Global SteamBot instance
-static mut STEAM_BOT: Option<Arc<SteamBot>> = None;
+// Global SteamBot instance - thread-safe initialization
+static STEAM_BOT: OnceCell<Arc<SteamBot>> = OnceCell::new();
 
 /// SteamBot - A thread-safe wrapper for Steam chat functionality
 /// 
@@ -36,6 +37,15 @@ static mut STEAM_BOT: Option<Arc<SteamBot>> = None;
 pub struct SteamBot {
     steam_client: Arc<Mutex<Option<LogOn>>>,
     chat_client: Arc<Mutex<Option<ChatRoomClient>>>,
+}
+
+impl std::fmt::Debug for SteamBot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SteamBot")
+            .field("steam_client", &"<LogOn>")
+            .field("chat_client", &"<ChatRoomClient>")
+            .finish()
+    }
 }
 
 impl SteamBot {
@@ -165,17 +175,15 @@ impl SteamBot {
     /// SteamBot::send_message_global("!sub").await?;
     /// ```
     /// 
-    /// # Safety
-    /// This function uses unsafe code to access the global SteamBot instance.
+    /// # Thread Safety
+    /// This function uses OnceCell for thread-safe access to the global SteamBot instance.
     /// The instance must be initialized by calling `main()` first.
     pub async fn send_message_global(message: &str) -> Result<(), Box<dyn std::error::Error>> {
-        unsafe {
-            if let Some(ref steam_bot) = STEAM_BOT {
-                let config = crate::config::Config::load()?;
-                steam_bot.send_message(message, &config).await
-            } else {
-                Err("SteamBot not initialized".into())
-            }
+        if let Some(steam_bot) = STEAM_BOT.get() {
+            let config = crate::config::Config::load()?;
+            steam_bot.send_message(message, &config).await
+        } else {
+            Err("SteamBot not initialized".into())
         }
     }
 }
@@ -222,9 +230,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let steam_bot = Arc::new(SteamBot::new());
     
     // Initialize global instance
-    unsafe {
-        STEAM_BOT = Some(steam_bot.clone());
-    }
+    STEAM_BOT.set(steam_bot.clone()).unwrap();
     
     // Login to Steam
     println!("Logging in to Steam...");

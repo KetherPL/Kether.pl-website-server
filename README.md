@@ -1,4 +1,4 @@
-# Kether.pl Website Server
+# Kether.pl Website Server (Kether Internal Services Server)
 
 This project is the backend server for the Kether.pl website, a homepage for the Polish community-driven [Left 4 Dead 2 ZoneMod-based server](https://github.com/Krevik/Kether.pl-L4D2-Server). It's built using Rust and leverages various libraries for web services, game server querying, and database management.
 
@@ -15,6 +15,22 @@ This project is the backend server for the Kether.pl website, a homepage for the
 *   **Steam Integration:**
     *   Fetches Steam user data (name, avatar, profile URL, etc.) using the Steam Web API (to display to the logged-in user on the website).
     *   Checks if a user owns Left 4 Dead 2 on their Steam account (a check for login purposes on our website).
+*   **Steam Bot Integration:**
+    *   The server includes a Steam bot that can log in to a Steam account and send messages to the selected Steam chat group channel.
+    *   Uses the SC_Sub_Poster library for Steam chat functionality.
+    *   Supports sending formatted messages with player mentions and group notifications.
+    *   Thread-safe implementation with global access for message sending from other parts of the application.
+*   **LiveServer Call for Subs:**
+    *   The core functionality involves fetching and processing "call for sub" requests from a live L4D2 server (requires a [dedicated SourceMod plugin](https://github.com/Krevik/Kether.pl-L4D2-Server/blob/kether_2.0/addons/sourcemod/scripting/kether/l4d2_call_for_sub_rest.sp)).
+    *   Automatically formats messages with player mentions and sends them to the configured Steam group chat.
+    *   Integrates with the Steam Bot to handle message delivery.
+*   **REST API Endpoint:**
+    *   Provides a simple REST endpoint for the L4D2 game server to retrieve SteamID64 (via POST method data) and send Call For Sub requests.
+    *   Endpoint: `POST /api/callForSub/`
+    *   Accepts JSON payload with Steam ID and returns appropriate HTTP status codes.
+*   **Steam API Integration:**
+    *   It uses the Steam API to fetch player information, such as player names, based on SteamIDs.
+    *   Enhanced integration for call-for-sub functionality with player profile lookup.
 *   **Database Management:**
     *   Uses SQLite for persistent data storage.
     *   Manages the following data:
@@ -26,7 +42,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
 *   **RESTful API:**
     *   Built with the Rocket web framework.
     *   Provides a comprehensive set of API endpoints for interacting with the server's features.
-    *   Supports CORS (Cross-Origin Resource Sharing) to allow requests from the Kether.pl frontend (running on `localhost:3000` and `kether.pl`).
+    *   Supports CORS (Cross-Origin Resource Sharing) to allow requests from the Kether.pl frontend (running on `localhost:3000` and `kether.pl`), and the L4D2 server.
 *   **Security:**
     *   Redirects root path (`/`) to the Kether.pl frontend.
 *   **Configuration:**
@@ -34,6 +50,8 @@ This project is the backend server for the Kether.pl website, a homepage for the
         *   Database path
         *   Database relative directory flag
         *   Steam Web API key
+        *   Steam account credentials for bot functionality
+        *   Steam group chat IDs for message delivery
 *   **Command-Line Interface (CLI):**
     *   Allows querying L4D2 servers directly from the command line.
     *   Starts the RESTful server service.
@@ -48,12 +66,14 @@ This project is the backend server for the Kether.pl website, a homepage for the
 *   **Rocket:** Web framework for building the RESTful API.
 *   **gamedig:** Library for querying game servers.
 *   **steam-rs:** Library for interacting with the Steam Web API.
+*   **SC_Sub_Poster:** Custom library for Steam chat functionality and bot integration.
 *   **diesel:** ORM (Object-Relational Mapper) for database interactions.
 *   **r2d2:** Connection pooling for the database.
 *   **rocket_cors:** CORS support for the Rocket web server.
 *   **clap:** Command-line argument parsing.
 *   **ini:** Configuration file parsing.
-* **colored:** Terminal output coloring.
+*   **colored:** Terminal output coloring.
+*   **tokio:** Async runtime for concurrent operations.
 
 ## Getting Started
 
@@ -67,6 +87,12 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   Set the `database_path` to the desired location and name of your SQLite database file.
     *   Set `database_relative_dir` to `true` if the database is in the same directory as the executable.
     *   Obtain a Steam Web API key from Steam and set it in `steam_web_api_key`.
+    *   For Steam Bot functionality, add your Steam account credentials:
+        *   Set `steam_account` to your Steam username
+        *   Set `steam_password` to your Steam password
+    *   For call-for-sub functionality, configure the Steam group chat:
+        *   Set `chat_group_id` to your Steam group ID
+        *   Set `chat_id` to the specific chat channel ID
 4.  **Run Database Migrations:**
     Requires `diesel-cli` to be installed. Either through `cargo install diesel-cli` or your OS's package manager (if supported).
     ```bash

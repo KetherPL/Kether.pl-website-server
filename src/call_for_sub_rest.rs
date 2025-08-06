@@ -12,9 +12,10 @@ use once_cell::sync::OnceCell;
 /// Maximum number of concurrent Steam API calls allowed
 /// 
 /// This constant defines the rate limit for Steam API calls to prevent
-/// hitting Steam's rate limits. The value of 2 is chosen to balance
-/// between responsiveness, API compliance, and avoiding excessive spam.
-const STEAM_API_RATE_LIMIT: usize = 2;
+/// hitting Steam's rate limits. ~~The value of 1 is chosen to balance ~~
+/// ~~between responsiveness, API compliance, and avoiding excessive spam.~~
+/// The value of 1 doesn't have any negative impact on the functionality of the !sub command.
+const STEAM_API_RATE_LIMIT: usize = 1;
 
 /// Rate limiter for Steam API calls
 /// 

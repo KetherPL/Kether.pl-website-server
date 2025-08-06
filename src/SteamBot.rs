@@ -5,9 +5,11 @@ use SC_Sub_Poster::{LogOn, ChatRoomClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
+use tokio::signal;
 
 // Global SteamBot instance - thread-safe initialization
 static STEAM_BOT: OnceCell<Arc<SteamBot>> = OnceCell::new();
+static CONFIG_CACHE: OnceCell<Config> = OnceCell::new();
 
 /// SteamBot - A thread-safe wrapper for Steam chat functionality
 /// 
@@ -137,14 +139,19 @@ impl SteamBot {
     /// steam_bot.send_message("!sub", &config).await?;
     /// ```
     pub async fn send_message(&self, message: &str, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+        let steam_client_guard = self.steam_client.lock().await;
         let chat_client_guard = self.chat_client.lock().await;
+        
+        if steam_client_guard.is_none() || chat_client_guard.is_none() {
+            return Err("SteamBot not fully initialized. Please login first.".into());
+        }
         
         if let Some(ref chat_client) = *chat_client_guard {
             chat_client.send_group_message(
                 config.chat_group_id,
                 config.chat_id,
                 message,
-                false, // echo_to_sender
+                false,
             ).await?;
             
             println!("Message sent to Steam chat: {}", message);
@@ -180,10 +187,20 @@ impl SteamBot {
     /// The instance must be initialized by calling `main()` first.
     pub async fn send_message_global(message: &str) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(steam_bot) = STEAM_BOT.get() {
-            let config = crate::config::Config::load()?;
-            steam_bot.send_message(message, &config).await
+            let config = CONFIG_CACHE.get_or_init(|| Config::load().expect("Failed to load config"));
+            steam_bot.send_message(message, config).await
         } else {
             Err("SteamBot not initialized".into())
+        }
+    }
+
+    pub async fn check_connection_health(&self) -> Result<bool, Box<dyn std::error::Error>> {
+        let steam_client_guard = self.steam_client.lock().await;
+        if let Some(ref steam_client) = *steam_client_guard {
+            // Add connection health check logic here
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 }
@@ -231,17 +248,25 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Initialize global instance
     STEAM_BOT.set(steam_bot.clone()).unwrap();
+    CONFIG_CACHE.set(config).unwrap();
     
     // Login to Steam
     println!("Logging in to Steam...");
-    steam_bot.login(&config).await?;
+    steam_bot.login(&CONFIG_CACHE.get().unwrap()).await?;
     
     println!("SteamBot logged in successfully. Keeping instance alive...");
     
-    // Keep the SteamBot instance alive
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+    // Keep the SteamBot instance alive with graceful shutdown
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            println!("Shutdown signal received, stopping SteamBot...");
+        }
+        _ = tokio::time::sleep(tokio::time::Duration::from_secs(60)) => {
+            // Periodic health check
+        }
     }
+    
+    Ok(())
 }
 
 /// Test module for SteamBot functionality

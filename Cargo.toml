@@ -9,7 +9,8 @@ rust-version = "1.85"
 homepage = "kether.pl"
 
 [dependencies]
-SC_Sub_Poster = { git = "https://github.com/KetherPL/SC_Sub_Poster.git", version = "0.0.2" }
+SC_Sub_Poster = { git = "https://github.com/KetherPL/SC_Sub_Poster.git" }
+#SC_Sub_Poster = { path = "../Kether.pl-sub-poster-rust" }
 clap = { version = "4.5.32", features = ["derive", "std"] }
 colored = { version = "3.0.0", optional = true }
 diesel = { version = "2.2.8", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"], optional = true }

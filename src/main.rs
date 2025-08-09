@@ -32,6 +32,9 @@ mod steam_rest;
 #[cfg(feature = "sat")]
 mod sat_specific_rest;
 
+#[cfg(feature = "fastdl")]
+mod fastdl_rest;
+
 #[cfg(feature = "rest_call_for_sub")]
 mod call_for_sub_rest;
 #[cfg(feature = "rest_call_for_sub")]

@@ -8,7 +8,7 @@ use crate::databases_rest::mount_database_routes;
 use crate::LiveServerInfo::{live_server_info, live_server_info_kether};
 #[cfg(feature = "rest_steam")]
 use crate::steam_rest::mount_steam_routes;
-use rocket::{launch, routes, Build, Rocket};
+use rocket::{fs::{FileServer, Options}, launch, routes, Build, Rocket};
 use rocket_cors::{AllowedOrigins, CorsOptions};
 
 /// Launches the Rocket web server with all configured routes and middleware
@@ -103,6 +103,15 @@ pub fn rocket() -> Rocket<Build> {
 	{
 		rocket_build = rocket_build.mount("/", crate::sat_specific_rest::mount_sat_specific_routes());
 		rocket_build = rocket_build.register("/", crate::sat_specific_rest::mount_sat_specific_catchers());
+	}
+	#[cfg(feature = "fastdl")]
+	{
+		// Mount FileServer first (rank 0 - highest priority) for file serving
+		let options = Options::Missing | Options::NormalizeDirs;
+		rocket_build = rocket_build.mount("/fastdl", FileServer::new("./fastdl", options));
+		
+		// Register FastDL catcher for directory listings (handles 404s from FileServer)
+		rocket_build = rocket_build.register("/fastdl", crate::fastdl_rest::mount_fastdl_catchers());
 	}
 
 	rocket_build

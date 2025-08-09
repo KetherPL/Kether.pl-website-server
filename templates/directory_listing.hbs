@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Index of /fastdl/{{listing.path}}</title>
+    <style>
+        body {
+            font-family: monospace;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            border-bottom: 2px solid #ccc;
+            padding-bottom: 10px;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            background-color: white;
+        }
+        th, td {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+        }
+        tr:hover {
+            background-color: #f9f9f9;
+        }
+        .dir {
+            font-weight: bold;
+        }
+        .dir::before {
+            content: "📁 ";
+        }
+        .file::before {
+            content: "📄 ";
+        }
+        .size {
+            text-align: right;
+        }
+        a {
+            text-decoration: none;
+            color: #0066cc;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .parent {
+            font-weight: bold;
+        }
+        .parent::before {
+            content: "⬆️ ";
+        }
+    </style>
+</head>
+<body>
+    <h1>Index of /fastdl/{{listing.path}}</h1>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Size</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#if listing.parent_path}}
+            <tr>
+                <td><a href="/fastdl/{{listing.parent_path}}" class="parent">Parent Directory</a></td>
+                <td class="size">-</td>
+            </tr>
+            {{/if}}
+            
+            {{#each listing.entries}}
+            <tr>
+                <td>
+                    {{#if is_dir}}
+                    <a href="/fastdl/{{../listing.path}}{{#if ../listing.path}}/{{/if}}{{name}}/" class="dir">{{name}}/</a>
+                    {{else}}
+                    <a href="/fastdl/{{../listing.path}}{{#if ../listing.path}}/{{/if}}{{name}}" class="file">{{name}}</a>
+                    {{/if}}
+                </td>
+                <td class="size">
+                    {{#if size}}
+                    {{#if (gt size 1048576)}}
+                    {{div size 1048576}}M
+                    {{else if (gt size 1024)}}
+                    {{div size 1024}}K
+                    {{else}}
+                    {{size}}
+                    {{/if}}
+                    {{else}}
+                    -
+                    {{/if}}
+                </td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+    
+    <hr>
+    <small>Kether FastDL Server</small>
+</body>
+</html> 

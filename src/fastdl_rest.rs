@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use rocket::{catch, catchers, get, http::{ContentType, Status}, response::{self, Responder, Response}, routes, Catcher, Route, Request};
+use rocket::{catch, catchers, http::{ContentType, Header}, response::{self, Responder, Response}, Catcher, Request, fairing::{Fairing, Info, Kind}};
 use std::fs;
 use std::path::{Path, PathBuf};
 use rocket::serde::Serialize;
@@ -27,6 +27,7 @@ impl<'r> Responder<'r, 'static> for HtmlResponse {
     fn respond_to(self, _: &'r rocket::Request<'_>) -> response::Result<'static> {
         Response::build()
             .header(ContentType::HTML)
+            // .header(Header::new("Cache-Control", "max-age=31536000")) // Cache for 1 year
             .sized_body(self.0.len(), std::io::Cursor::new(self.0))
             .ok()
     }
@@ -275,7 +276,7 @@ async fn directory_listing_impl(path: PathBuf) -> Result<HtmlResponse, rocket::h
 
 /// Custom 404 catcher for FastDL that provides directory listings
 #[catch(404)]
-pub async fn fastdl_not_found(req: &Request<'_>) -> Option<HtmlResponse> {
+async fn fastdl_not_found(req: &Request<'_>) -> Option<HtmlResponse> {
     let uri_path = req.uri().path().as_str();
     
     // Only handle requests that start with /fastdl/
@@ -310,12 +311,33 @@ pub async fn fastdl_not_found(req: &Request<'_>) -> Option<HtmlResponse> {
     None // Let the global catcher handle it
 }
 
+// Custom fairing to add Cache-Control headers to FastDL responses
+pub struct FastDLCacheHeaders;
+
+#[rocket::async_trait]
+impl Fairing for FastDLCacheHeaders {
+    fn info(&self) -> Info {
+        Info {
+            name: "FastDL Cache Headers",
+            kind: Kind::Response,
+        }
+    }
+
+    async fn on_response<'r>(&self, req: &'r Request<'_>, res: &mut Response<'r>) {
+        // Only add cache headers to FastDL requests
+        if req.uri().path().as_str().starts_with("/fastdl/l4d2_kether/resource/") {
+            // Add long cache for static files (1 year)
+            res.set_header(Header::new("Cache-Control", "public, max-age=31536000, immutable"));
+            // Add ETag for better caching
+            if let Some(content_length) = res.headers().get_one("Content-Length") {
+                let etag = format!("\"{}\"", content_length); // Simple ETag based on content length
+                res.set_header(Header::new("ETag", etag));
+            }
+        }
+    }
+}
+
 /// Mount FastDL catchers
 pub fn mount_fastdl_catchers() -> Vec<Catcher> {
     catchers![fastdl_not_found]
-}
-
-/// Mount FastDL routes (empty now, using catcher approach)
-pub fn mount_fastdl_routes() -> Vec<Route> {
-    routes![]
 }

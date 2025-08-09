@@ -106,6 +106,9 @@ pub fn rocket() -> Rocket<Build> {
 	}
 	#[cfg(feature = "fastdl")]
 	{
+		// Attach FastDL cache headers fairing
+		rocket_build = rocket_build.attach(crate::fastdl_rest::FastDLCacheHeaders);
+		
 		// Mount FileServer first (rank 0 - highest priority) for file serving
 		let options = Options::Missing | Options::NormalizeDirs;
 		rocket_build = rocket_build.mount("/fastdl", FileServer::new("./fastdl", options));

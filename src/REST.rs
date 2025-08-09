@@ -102,6 +102,7 @@ pub fn rocket() -> Rocket<Build> {
 	#[cfg(feature = "sat")]
 	{
 		rocket_build = rocket_build.mount("/", crate::sat_specific_rest::mount_sat_specific_routes());
+		rocket_build = rocket_build.register("/", crate::sat_specific_rest::mount_sat_specific_catchers());
 	}
 
 	rocket_build

@@ -41,55 +41,88 @@ fn render_directory_listing_html(listing: &DirectoryListing) -> String {
     <title>Index of /fastdl/{}</title>
     <style>
         body {{
-            font-family: monospace;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             margin: 20px;
-            background-color: #f5f5f5;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
         }}
         h1 {{
-            border-bottom: 2px solid #ccc;
+            border-bottom: 2px solid #444;
             padding-bottom: 10px;
+            color: #fff;
+            text-shadow: 0 0 10px #4a9eff;
         }}
         table {{
             border-collapse: collapse;
             width: 100%;
-            background-color: white;
+            background-color: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 8px;
+            overflow: hidden;
         }}
         th, td {{
             text-align: left;
-            padding: 8px 12px;
-            border-bottom: 1px solid #ddd;
+            padding: 12px 16px;
+            border-bottom: 1px solid #444;
         }}
         th {{
-            background-color: #f0f0f0;
+            background-color: #3a3a3a;
             font-weight: bold;
+            color: #fff;
+            text-transform: uppercase;
+            font-size: 0.9em;
+            letter-spacing: 1px;
         }}
         tr:hover {{
-            background-color: #f9f9f9;
+            background-color: #404040;
+            transition: background-color 0.2s ease;
         }}
         .dir {{
             font-weight: bold;
+            color: #4a9eff;
         }}
         .dir::before {{
             content: "📁 ";
+            filter: brightness(1.2);
         }}
         .file::before {{
             content: "📄 ";
+            filter: brightness(1.2);
         }}
         .size {{
             text-align: right;
+            color: #aaa;
+            font-family: monospace;
         }}
         a {{
             text-decoration: none;
-            color: #0066cc;
+            color: #4a9eff;
+            transition: color 0.2s ease;
         }}
         a:hover {{
+            color: #66b3ff;
             text-decoration: underline;
+            text-shadow: 0 0 5px #4a9eff;
         }}
         .parent {{
             font-weight: bold;
+            color: #ff9500;
         }}
         .parent::before {{
             content: "⬆️ ";
+        }}
+        .parent:hover {{
+            color: #ffb84d;
+            text-shadow: 0 0 5px #ff9500;
+        }}
+        hr {{
+            border: none;
+            border-top: 1px solid #444;
+            margin: 20px 0;
+        }}
+        small {{
+            color: #888;
+            font-style: italic;
         }}
     </style>
 </head>

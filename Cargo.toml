@@ -17,7 +17,6 @@ diesel = { version = "2.2.8", features = ["sqlite", "returning_clauses_for_sqlit
 gamedig = { version = "0.6.1", optional = true }
 rocket = { version = "0.5.1", features = ["json"], optional = true }
 rocket_cors = { version = "0.6.0", optional = true }
-rocket_dyn_templates = { version = "0.1.0", features = ["handlebars"], optional = true }
 rust-ini = { version = "0.21.1", features = ["inline-comment"], optional = true }
 serde_json = "1.0.140"
 steam-rs = { version = "0.5.1", optional = true }
@@ -35,7 +34,7 @@ strip = true
 default = ["kether_meta", "sat"] # Features starter pack
     kether_meta = ["rest_sqlite", "rest_steam", "server_query", "rest_call_for_sub", "fastdl"] # Meta package for Kether's needs
     sat = ["rest_api"] # Satanixon's/StarterX4's-specific features ¯\_(ツ)_/¯
-        fastdl = ["rest_api", "dep:rocket_dyn_templates"] # FastDL http(!) server – for Source/GoldSrc games. Both for custom server content (e.g. maps, models, sounds) and (in our usecase) MOTDs.
+        fastdl = ["rest_api"] # FastDL http(!) server – for Source/GoldSrc games. Both for custom server content (e.g. maps, models, sounds) and (in our usecase) MOTDs.
                 # /↑\ Don't forget pass it through the http. Source/GoldSrc games don't support https for FastDL.
         rest_sqlite = ["cfg", "rest_api", "dep:diesel"] # REST API – database part for website (binds, bind suggestions, commands)
         rest_steam = ["cfg", "rest_api", "dep:steam-rs"] # REST API – Steam part for website (fetch userdata, check if owns appid=550 (L4D2))

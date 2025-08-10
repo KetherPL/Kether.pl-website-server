@@ -137,6 +137,9 @@ This project is the backend server for the Kether.pl website, a homepage for the
     * **FastDL Server:** Access your game content at `http://localhost:3001/fastdl/...` (if FastDL feature is enabled).
     * **Directory Listings:** Browse folders at `http://localhost:3001/fastdl/your-folder/` to see automatic directory listings.
 
+
+ **Note:** To suppress Rocket's "no matching routes" warnings spam in console, set: `export ROCKET_LOG_LEVEL=none` (default is `critical`). Due to how FastDL browser file listing works, as well as random internet bots trying to exploit WordPress api paths (until you have a very effective bot-blocking filters on the Nginx/Apache level), you'll see the server console full of these messages.
+
 ## License
 
 This project is licensed under the GPL-3.0-only license.

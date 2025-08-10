@@ -15,7 +15,6 @@ dependencies = [
  "rocket",
  "rocket_cors",
  "rust-ini",
- "serde_json",
  "smol",
  "steam-rs",
  "tokio",

@@ -43,6 +43,16 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   Built with the Rocket web framework.
     *   Provides a comprehensive set of API endpoints for interacting with the server's features.
     *   Supports CORS (Cross-Origin Resource Sharing) to allow requests from the Kether.pl frontend (running on `localhost:3000` and `kether.pl`), and the L4D2 server.
+*   **FastDL Server:**
+    *   **HTTP File Server:** Serves static files for Source/GoldSrc games (maps, models, sounds, MOTDs) via HTTP.
+    *   **Directory Listings:** Automatic HTML directory listings for folders without `index.html` files.
+    *   **Dark Theme:** Modern dark-themed directory listings with hover effects and professional styling.
+    *   **Smart Caching:** Configurable cache headers with 1-year caching for static content (`Cache-Control: public, max-age=31536000, immutable`).
+    *   **Async File Operations:** Uses `smol` async runtime for efficient file system operations.
+    *   **Security:** Path traversal protection and proper error handling.
+    *   **Route Priority:** FileServer handles files first, custom catcher provides directory listings for folders.
+    *   **ETag Support:** Automatic ETag generation for improved cache validation.
+    *   **Accessible via:** `http://your-domain/fastdl/` (e.g., `/fastdl/l4d2_kether/resource/`)
 *   **Security:**
     *   Redirects root path (`/`) to the Kether.pl frontend.
 *   **Configuration:**
@@ -74,6 +84,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
 *   **ini:** Configuration file parsing.
 *   **colored:** Terminal output coloring.
 *   **tokio:** Async runtime for concurrent operations.
+*   **smol:** Async runtime for efficient file system operations in FastDL server.
 
 ## Getting Started
 
@@ -99,7 +110,14 @@ This project is the backend server for the Kether.pl website, a homepage for the
     diesel setup
     diesel migration run
     ```
-5.  **Build and Run:**
+5.  **Set up FastDL (Optional):**
+    If you want to use the FastDL server feature:
+    *   Create a `fastdl` directory in your project root: `mkdir fastdl`
+    *   Place your game content (maps, models, sounds, MOTDs) in the `fastdl` directory
+    *   The FastDL server will be available at `http://your-domain/fastdl/`
+    *   Directory listings will automatically show for folders without `index.html` files
+    *   Files will be served with 1-year cache headers for optimal performance
+6.  **Build and Run:**
     ```bash
     cargo build --release
     cargo run --release -- --service
@@ -116,6 +134,8 @@ This project is the backend server for the Kether.pl website, a homepage for the
 
 6. **Access the API:**
     * Once the server is running, you can access the API endpoints at `http://localhost:3001/api/...` (or the port you configured).
+    * **FastDL Server:** Access your game content at `http://localhost:3001/fastdl/...` (if FastDL feature is enabled).
+    * **Directory Listings:** Browse folders at `http://localhost:3001/fastdl/your-folder/` to see automatic directory listings.
 
 ## License
 

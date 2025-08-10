@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use rocket::{catch, catchers, http::{ContentType, Header}, response::{self, Responder, Response}, Catcher, Request, fairing::{Fairing, Info, Kind}};
-use std::fs;
+use smol::{fs, stream::StreamExt};
 use std::path::{Path, PathBuf};
 use rocket::serde::Serialize;
 
@@ -192,7 +192,9 @@ fn render_directory_listing_html(listing: &DirectoryListing) -> String {
     </table>
     
     <hr>
-    <small>Kether FastDL Server</small>
+    <small>Kether FastDL Server</small><br>
+    <small>Part of the <a href="https://github.com/KetherPL/Kether.pl-website-server">Kether Internal Services Server</a></small><br>
+    <small>Powered by <a href="https://www.rust-lang.org/">Rust</a>, <a href="https://github.com/SergioBenitez/Rocket">Rocket</a> and <a href="https://github.com/smol-rs/smol">Smol</a></small>
 </body>
 </html>"#);
 
@@ -233,18 +235,21 @@ async fn directory_listing_impl(path: PathBuf) -> Result<HtmlResponse, rocket::h
     // Read directory contents
     let mut entries = Vec::new();
     
-    if let Ok(dir_entries) = fs::read_dir(&full_path) {
-        for entry in dir_entries.flatten() {
-            if let Ok(metadata) = entry.metadata() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                let is_dir = metadata.is_dir();
-                let size = if is_dir { None } else { Some(metadata.len()) };
-                
-                entries.push(FileEntry {
-                    name,
-                    is_dir,
-                    size,
-                });
+    if let Ok(dir_entries) = fs::read_dir(&full_path).await {
+        let entries_stream: Vec<_> = dir_entries.collect().await;
+        for entry_result in entries_stream {
+            if let Ok(entry) = entry_result {
+                if let Ok(metadata) = entry.metadata().await {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let is_dir = metadata.is_dir();
+                    let size = if is_dir { None } else { Some(metadata.len()) };
+                    
+                    entries.push(FileEntry {
+                        name,
+                        is_dir,
+                        size,
+                    });
+                }
             }
         }
     }

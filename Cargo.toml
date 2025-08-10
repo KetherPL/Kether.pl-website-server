@@ -6,7 +6,7 @@ authors = ["Dominik Adrian Grzywak <starterx4@gmail.com>"]
 description = "Internal Services Server for the Kether L4D2 server website"
 license = "GPL-3.0-only"
 rust-version = "1.85"
-repository = ""
+repository = "https://github.com/KetherPL/Kether.pl-website-server"
 homepage = "kether.pl"
 
 [dependencies]

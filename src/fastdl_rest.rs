@@ -211,24 +211,25 @@ async fn directory_listing_impl(path: PathBuf) -> Result<HtmlResponse, rocket::h
         return Err(rocket::http::Status::Forbidden);
     }
     
-    // Check if path exists
-    if !full_path.exists() {
-        return Err(rocket::http::Status::NotFound);
-    }
+    // Check if path exists and get metadata
+    let metadata = match fs::metadata(&full_path).await {
+        Ok(meta) => meta,
+        Err(_) => return Err(rocket::http::Status::NotFound),
+    };
     
     // If it's a file, let FileServer handle it
-    if full_path.is_file() {
+    if metadata.is_file() {
         return Err(rocket::http::Status::NotFound);
     }
     
     // If it's not a directory, return 404
-    if !full_path.is_dir() {
+    if !metadata.is_dir() {
         return Err(rocket::http::Status::NotFound);
     }
     
     // Check if index.html exists (let FileServer handle it)
     let index_path = full_path.join("index.html");
-    if index_path.exists() {
+    if fs::metadata(&index_path).await.is_ok() {
         return Err(rocket::http::Status::NotFound); // Let FileServer handle this
     }
     
@@ -303,12 +304,14 @@ async fn fastdl_not_found(req: &Request<'_>) -> Option<HtmlResponse> {
     }
     
     // If it's a directory without index.html, serve directory listing
-    if full_path.exists() && full_path.is_dir() {
-        let index_path = full_path.join("index.html");
-        if !index_path.exists() {
-            match directory_listing_impl(path).await {
-                Ok(response) => return Some(response),
-                Err(_) => return None,
+    if let Ok(metadata) = fs::metadata(&full_path).await {
+        if metadata.is_dir() {
+            let index_path = full_path.join("index.html");
+            if fs::metadata(&index_path).await.is_err() {
+                match directory_listing_impl(path).await {
+                    Ok(response) => return Some(response),
+                    Err(_) => return None,
+                }
             }
         }
     }

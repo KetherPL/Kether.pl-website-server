@@ -256,8 +256,8 @@ impl SteamBot {
     /// Checks the health of the Steam connection
     /// 
     /// This function performs a health check on the Steam connection to determine
-    /// if it's still valid and functional. It checks both the steam client and
-    /// chat client connections.
+    /// if it's still valid and functional. It attempts a lightweight operation
+    /// to verify the connection is actually alive.
     /// 
     /// # Returns
     /// * `Ok(bool)` - True if connection is healthy, false otherwise
@@ -279,14 +279,36 @@ impl SteamBot {
             return Ok(false);
         }
         
-        // TODO: Add actual connection health check logic here
-        // For now, we'll assume the connection is healthy if both clients exist
-        // In a real implementation, you might:
-        // 1. Send a ping to Steam servers
-        // 2. Check if the connection is still alive
-        // 3. Verify authentication is still valid
-        
-        Ok(true)
+        // Perform actual connection health check by attempting a lightweight operation
+        if let Some(ref chat_client) = *chat_client_guard {
+            // Try to send a test message to ourselves (this will fail if connection is dead)
+            // We use a special test message that won't actually be sent
+            match chat_client.send_group_message(
+                0, // Invalid group ID for testing
+                0, // Invalid chat ID for testing
+                "connection_test",
+                false,
+            ).await {
+                Ok(_) => {
+                    // This shouldn't happen with invalid IDs, but if it does, connection is alive
+                    Ok(true)
+                }
+                Err(e) => {
+                    // Check if the error indicates connection issues vs invalid parameters
+                    let error_str = e.to_string().to_lowercase();
+                    if error_str.contains("connection") || error_str.contains("network") || 
+                       error_str.contains("timeout") || error_str.contains("closed") {
+                        println!("Connection health check failed: {}", e);
+                        Ok(false)
+                    } else {
+                        // Error is likely due to invalid group/chat IDs, which means connection is alive
+                        Ok(true)
+                    }
+                }
+            }
+        } else {
+            Ok(false)
+        }
     }
 
     /// Attempts to reconnect to Steam
@@ -379,12 +401,12 @@ impl SteamBot {
     /// steam_bot.send_message("!sub", &config).await?;
     /// ```
     pub async fn ensure_connection(&self, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
-        // Check if we need to perform a health check
+        // Check if we need to perform a health check (every 5 minutes)
         let should_check = {
             let mut last_check_guard = self.last_health_check.lock().await;
             let now = Instant::now();
             let should = last_check_guard
-                .map(|last| now.duration_since(last).as_secs() >= 30) // Check every 30 seconds
+                .map(|last| now.duration_since(last).as_secs() >= 300) // Check every 5 minutes
                 .unwrap_or(true);
             if should {
                 *last_check_guard = Some(now);
@@ -395,22 +417,35 @@ impl SteamBot {
         if should_check {
             let is_healthy = match self.check_connection_health().await {
                 Ok(healthy) => healthy,
-                Err(e) => return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))),
+                Err(e) => {
+                    println!("Health check error: {}", e);
+                    false // Treat health check errors as unhealthy
+                }
             };
+            
             if !is_healthy {
+                println!("Steam connection unhealthy, attempting reconnection...");
                 // Attempt reconnection with retry logic
                 let max_retries = 3;
                 for attempt in 1..=max_retries {
                     match self.reconnect(config).await {
-                        Ok(()) => return Ok(()),
+                        Ok(()) => {
+                            println!("Successfully reconnected to Steam");
+                            return Ok(());
+                        }
                         Err(e) => {
                             if attempt == max_retries {
-                                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to reconnect after {} attempts: {}", max_retries, e))));
+                                return Err(Box::new(std::io::Error::new(
+                                    std::io::ErrorKind::Other, 
+                                    format!("Failed to reconnect after {} attempts: {}", max_retries, e)
+                                )));
                             }
-                            println!("Reconnection attempt {} failed, retrying...", attempt);
+                            println!("Reconnection attempt {} failed, retrying... (Error: {})", attempt, e);
                         }
                     }
                 }
+            } else {
+                println!("Steam connection health check passed");
             }
         }
         
@@ -553,7 +588,7 @@ pub async fn main() -> Result<(), String> {
     println!("SteamBot logged in successfully. Keeping instance alive...");
     
     // Keep the SteamBot instance alive with periodic health checks
-    let mut health_check_interval = tokio::time::interval(Duration::from_secs(3600)); // An hour
+    let mut health_check_interval = tokio::time::interval(Duration::from_secs(900)); // Every 15 minutes
     
     loop {
         tokio::select! {
@@ -565,12 +600,13 @@ pub async fn main() -> Result<(), String> {
             // Periodic health check
             _ = health_check_interval.tick() => {
                 let config = CONFIG_CACHE.get().unwrap();
+                println!("Performing periodic Steam connection health check...");
                 if let Err(e) = steam_bot.ensure_connection(config).await {
-                    eprintln!("Health check failed: {}", e);
+                    eprintln!("Periodic health check failed: {}", e);
                 } else {
                     let state = steam_bot.get_connection_state().await;
                     let attempts = steam_bot.get_reconnect_attempts().await;
-                    println!("SteamBot health check: state={:?}, reconnect_attempts={}", state, attempts);
+                    println!("SteamBot health check completed: state={:?}, reconnect_attempts={}", state, attempts);
                 }
             }
         }

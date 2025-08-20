@@ -146,6 +146,7 @@ pub async fn call_for_sub(payload: Json<CallForSubPayload>, config: &State<Confi
     // println!("Message: {}", sub_msg);
 	if let Err(e) = SteamBot::send_message_global(&sub_msg).await {
 		eprintln!("{} Could not send message: {}", "Error:".red(), e);
+		// Note: Connection recovery is handled by the periodic health checks in SteamBot::main()
 	}
     Ok(())
 }

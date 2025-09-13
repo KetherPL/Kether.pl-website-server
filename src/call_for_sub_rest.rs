@@ -144,9 +144,12 @@ pub async fn call_for_sub(payload: Json<CallForSubPayload>, config: &State<Confi
     // println!("Account ID: {}", acc_id);
 	let sub_msg: String = format!("[mention={}]@{}[/mention] called for a sub, [mention=here]@online[/mention]", acc_id, caller_name?);
     // println!("Message: {}", sub_msg);
-	if let Err(e) = SteamBot::send_message_global(&sub_msg).await {
-		eprintln!("{} Could not send message: {}", "Error:".red(), e);
-		// Note: Connection recovery is handled by the periodic health checks in SteamBot::main()
+	match SteamBot::send_message_global(&sub_msg).await {
+		Ok(()) => println!("Call for sub message sent successfully"),
+		Err(e) => {
+			eprintln!("{} Could not send message: {}", "Error:".red(), e.to_string());
+			// Note: Connection recovery is now handled automatically in send_message_global()
+		}
 	}
     Ok(())
 }

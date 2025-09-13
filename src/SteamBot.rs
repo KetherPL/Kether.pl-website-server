@@ -166,7 +166,7 @@ impl SteamBot {
     /// steam_bot.login(&config).await?;
     /// steam_bot.send_message("!sub", &config).await?;
     /// ```
-    pub async fn send_message(&self, message: &str, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn send_message(&self, message: &str, config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let steam_client_guard = self.steam_client.lock().await;
         let chat_client_guard = self.chat_client.lock().await;
         
@@ -180,7 +180,7 @@ impl SteamBot {
                 config.chat_id,
                 message,
                 false,
-            ).await?;
+            ).await.map_err(|e| format!("Failed to send message: {}", e))?;
             
             println!("Message sent to Steam chat: {}", message);
         } else {
@@ -213,10 +213,33 @@ impl SteamBot {
     /// # Thread Safety
     /// This function uses OnceCell for thread-safe access to the global SteamBot instance.
     /// The instance must be initialized by calling `main()` first.
-    pub async fn send_message_global(message: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn send_message_global(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(steam_bot) = STEAM_BOT.get() {
             let config = CONFIG_CACHE.get_or_init(|| Config::load().expect("Failed to load config"));
-            steam_bot.send_message(message, config).await
+            
+            // Try to send message with immediate recovery on connection failures
+            match steam_bot.send_message(message, config).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    let error_str = e.to_string().to_lowercase();
+                    if error_str.contains("broken pipe") || error_str.contains("connection") || 
+                       error_str.contains("network") || error_str.contains("timeout") || 
+                       error_str.contains("closed") || error_str.contains("io error") {
+                        println!("Message send failed due to connection issue: {}", e);
+                        println!("Attempting immediate reconnection and retry...");
+                        
+                        // Attempt to reconnect and retry once
+                        if let Err(reconnect_err) = steam_bot.reconnect(config).await {
+                            return Err(format!("Failed to reconnect after message send failure: {}", reconnect_err).into());
+                        }
+                        
+                        // Retry sending the message
+                        steam_bot.send_message(message, config).await
+                    } else {
+                        Err(e)
+                    }
+                }
+            }
         } else {
             Err("SteamBot not initialized".into())
         }
@@ -244,7 +267,7 @@ impl SteamBot {
     /// # Thread Safety
     /// This function uses OnceCell for thread-safe access to the global SteamBot instance.
     /// The instance must be initialized by calling `main()` first.
-    pub async fn send_message_global_with_recovery(message: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn send_message_global_with_recovery(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(steam_bot) = STEAM_BOT.get() {
             let config = CONFIG_CACHE.get_or_init(|| Config::load().expect("Failed to load config"));
             steam_bot.send_message_with_recovery(message, config).await
@@ -256,8 +279,11 @@ impl SteamBot {
     /// Checks the health of the Steam connection
     /// 
     /// This function performs a health check on the Steam connection to determine
-    /// if it's still valid and functional. It attempts a lightweight operation
-    /// to verify the connection is actually alive.
+    /// if it's still valid and functional. It uses a lightweight operation that
+    /// doesn't send actual messages to avoid spamming users.
+    /// 
+    /// # Arguments
+    /// * `config` - A reference to the Config struct containing chat IDs
     /// 
     /// # Returns
     /// * `Ok(bool)` - True if connection is healthy, false otherwise
@@ -265,12 +291,12 @@ impl SteamBot {
     /// 
     /// # Example
     /// ```rust
-    /// let is_healthy = steam_bot.check_connection_health().await?;
+    /// let is_healthy = steam_bot.check_connection_health(&config).await?;
     /// if !is_healthy {
-    ///     steam_bot.reconnect().await?;
+    ///     steam_bot.reconnect(&config).await?;
     /// }
     /// ```
-    pub async fn check_connection_health(&self) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn check_connection_health(&self, config: &Config) -> Result<bool, Box<dyn std::error::Error>> {
         let steam_client_guard = self.steam_client.lock().await;
         let chat_client_guard = self.chat_client.lock().await;
         
@@ -279,31 +305,41 @@ impl SteamBot {
             return Ok(false);
         }
         
-        // Perform actual connection health check by attempting a lightweight operation
+        // Perform a lightweight health check without sending messages
+        // We'll use a timeout-based approach to detect dead connections
         if let Some(ref chat_client) = *chat_client_guard {
-            // Try to send a test message to ourselves (this will fail if connection is dead)
-            // We use a special test message that won't actually be sent
-            match chat_client.send_group_message(
-                0, // Invalid group ID for testing
-                0, // Invalid chat ID for testing
-                "connection_test",
-                false,
+            // Try to send a message to an invalid group ID (this won't actually send anything)
+            // but will fail quickly if the connection is dead
+            match tokio::time::timeout(
+                Duration::from_secs(5), // 5 second timeout
+                chat_client.send_group_message(
+                    0, // Invalid group ID - won't actually send
+                    0, // Invalid chat ID - won't actually send  
+                    "health_check", // Test message that won't be sent
+                    false,
+                )
             ).await {
-                Ok(_) => {
+                Ok(Ok(_)) => {
                     // This shouldn't happen with invalid IDs, but if it does, connection is alive
                     Ok(true)
                 }
-                Err(e) => {
-                    // Check if the error indicates connection issues vs invalid parameters
+                Ok(Err(e)) => {
+                    // Check if the error indicates connection issues
                     let error_str = e.to_string().to_lowercase();
-                    if error_str.contains("connection") || error_str.contains("network") || 
-                       error_str.contains("timeout") || error_str.contains("closed") {
+                    if error_str.contains("broken pipe") || error_str.contains("connection") || 
+                       error_str.contains("network") || error_str.contains("timeout") || 
+                       error_str.contains("closed") || error_str.contains("io error") {
                         println!("Connection health check failed: {}", e);
                         Ok(false)
                     } else {
                         // Error is likely due to invalid group/chat IDs, which means connection is alive
                         Ok(true)
                     }
+                }
+                Err(_timeout) => {
+                    // Timeout indicates connection is likely dead
+                    println!("Connection health check timed out - connection appears dead");
+                    Ok(false)
                 }
             }
         } else {
@@ -415,7 +451,7 @@ impl SteamBot {
         };
         
         if should_check {
-            let is_healthy = match self.check_connection_health().await {
+            let is_healthy = match self.check_connection_health(config).await {
                 Ok(healthy) => healthy,
                 Err(e) => {
                     println!("Health check error: {}", e);
@@ -470,9 +506,9 @@ impl SteamBot {
     /// ```rust
     /// steam_bot.send_message_with_recovery("!sub", &config).await?;
     /// ```
-    pub async fn send_message_with_recovery(&self, message: &str, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn send_message_with_recovery(&self, message: &str, config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Ensure connection is healthy
-        self.ensure_connection(config).await?;
+        self.ensure_connection(config).await.map_err(|e| format!("Connection check failed: {}", e))?;
         
         // Send message with retry logic
         let max_retries = 3;

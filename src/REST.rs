@@ -8,6 +8,8 @@ use crate::databases_rest::mount_database_routes;
 use crate::LiveServerInfo::{live_server_info, live_server_info_kether};
 #[cfg(feature = "rest_steam")]
 use crate::steam_rest::mount_steam_routes;
+use crate::json_cmds_binds_rest::mount_json_routes;
+use crate::json_storage::JsonDatabase;
 use rocket::{fs::{FileServer, Options}, launch, routes, Build, Rocket};
 use rocket_cors::{AllowedOrigins, CorsOptions};
 
@@ -39,6 +41,7 @@ use rocket_cors::{AllowedOrigins, CorsOptions};
 /// 
 /// # Routes
 /// * `/api` - Database REST endpoints (if rest_sqlite enabled)
+/// * `/newapi` - JSON-based REST endpoints (binds, suggestions, commands, votings)
 /// * `/api/LiveServerInfo` - Server query endpoints (if server_query enabled)
 /// * `/api/steam` - Steam REST endpoints (if rest_steam enabled)
 /// * `/api/callForSub` - Call-for-sub endpoints (if rest_call_for_sub enabled)
@@ -116,6 +119,11 @@ pub fn rocket() -> Rocket<Build> {
 		// Register FastDL catcher for directory listings (handles 404s from FileServer)
 		rocket_build = rocket_build.register("/fastdl", crate::fastdl_rest::mount_fastdl_catchers());
 	}
+
+	// Initialize and mount JSON-based routes at /newapi
+	let json_db = JsonDatabase::load().expect("Failed to load JSON database");
+	rocket_build = rocket_build.manage(json_db);
+	rocket_build = rocket_build.mount("/newapi", mount_json_routes());
 
 	rocket_build
 }

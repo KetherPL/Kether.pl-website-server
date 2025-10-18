@@ -20,17 +20,20 @@ use rocket_cors::{AllowedOrigins, CorsOptions};
 /// available routes based on the enabled features.
 /// 
 /// # Features
+/// * `rest_json_db` - Mounts JSON-based database REST endpoints (binds, commands, suggestions, voting)
+/// * `rest_sqlite` - Mounts legacy SQLite database REST endpoints (deprecated, use rest_json_db)
 /// * `rest_steam` - Mounts Steam-related REST endpoints
 /// * `rest_call_for_sub` - Mounts call-for-sub REST endpoints
-/// * `rest_sqlite` - Mounts database REST endpoints and manages database connection pool
 /// * `server_query` - Mounts LiveServerInfo REST endpoints
 /// * `sat` - Mounts Satanixon-specific REST endpoints
+/// * `fastdl` - Mounts FastDL file server for Source/GoldSrc game content
 /// 
 /// # Configuration
 /// * **Port**: 3001 (configured for NodeJS/React compatibility)
 /// * **CORS**: Configured for localhost, kether.pl, and specific IP addresses
-/// * **Database**: SQLite connection pool (if rest_sqlite feature enabled)
-/// * **Config**: Loads and manages application configuration
+/// * **JSON Database**: In-memory with file-based persistence (if rest_json_db feature enabled)
+/// * **SQLite Database**: Connection pool for legacy support (if rest_sqlite feature enabled)
+/// * **Config**: Loads and manages application configuration from KISS.ini
 /// 
 /// # CORS Origins
 /// * `http://localhost:3000` - Local Kether website development
@@ -40,11 +43,16 @@ use rocket_cors::{AllowedOrigins, CorsOptions};
 /// * `http://54.36.179.182` - L4D2 server for sub requests
 /// 
 /// # Routes
-/// * `/api` - Database REST endpoints (if rest_sqlite enabled)
-/// * `/newapi` - JSON-based REST endpoints (binds, suggestions, commands, votings)
+/// * `/api` - JSON-based database REST endpoints (if rest_json_db enabled)
+///   - `/api/binds/*` - Binds CRUD operations
+///   - `/api/commands/*` - Commands CRUD operations
+///   - `/api/bind_suggestions/*` - Bind suggestions CRUD operations
+///   - `/api/bind_votings/*` - Voting operations on binds
+/// * `/oldapi` - Legacy SQLite database REST endpoints (if rest_sqlite enabled)
 /// * `/api/LiveServerInfo` - Server query endpoints (if server_query enabled)
 /// * `/api/steam` - Steam REST endpoints (if rest_steam enabled)
 /// * `/api/callForSub` - Call-for-sub endpoints (if rest_call_for_sub enabled)
+/// * `/fastdl` - FastDL file server (if fastdl enabled)
 /// * `/` - Satanixon-specific endpoints (if sat enabled)
 /// 
 /// # Example
@@ -84,11 +92,17 @@ pub fn rocket() -> Rocket<Build> {
 		let config = Config::load().expect("Failed to load configuration");
 		rocket_build = rocket_build.manage(config);
 	}
+	#[cfg(feature = "rest_json_db")]
+	{
+		let json_db = JsonDatabase::load().expect("Failed to load JSON database");
+		rocket_build = rocket_build.manage(json_db);
+		rocket_build = rocket_build.mount("/api", mount_json_routes());
+	}
 	#[cfg(feature = "rest_sqlite")]
 	{
 		let db_pool = crate::db::database::establish_connection_pool();
 		rocket_build = rocket_build.manage(db_pool);
-		rocket_build = rocket_build.mount("/api", mount_database_routes());
+		rocket_build = rocket_build.mount("/oldapi", mount_database_routes());
 	}
 	#[cfg(feature = "server_query")]
 	{
@@ -119,11 +133,6 @@ pub fn rocket() -> Rocket<Build> {
 		// Register FastDL catcher for directory listings (handles 404s from FileServer)
 		rocket_build = rocket_build.register("/fastdl", crate::fastdl_rest::mount_fastdl_catchers());
 	}
-
-	// Initialize and mount JSON-based routes at /newapi
-	let json_db = JsonDatabase::load().expect("Failed to load JSON database");
-	rocket_build = rocket_build.manage(json_db);
-	rocket_build = rocket_build.mount("/newapi", mount_json_routes());
 
 	rocket_build
 }

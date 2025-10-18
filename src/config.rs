@@ -29,8 +29,6 @@ pub const DATABASE_RELATIVE_DIR: bool = true;
 /// It provides a centralized way to access all application settings.
 /// 
 /// # Fields
-/// * `database_path` - Path to the SQLite database file
-/// * `database_relative_dir` - Whether the database path is relative to executable
 /// * `steam_web_api_key` - Steam Web API key for fetching user data
 /// * `chat_group_id` - Steam group ID for chat functionality
 /// * `chat_id` - Steam chat ID for message sending
@@ -40,13 +38,10 @@ pub const DATABASE_RELATIVE_DIR: bool = true;
 /// # Example
 /// ```rust
 /// let config = Config::load()?;
-/// println!("Database path: {}", config.database_path);
 /// println!("Steam API key: {}", config.steam_web_api_key);
 /// ```
 #[derive(Debug)]
 pub struct Config {
-	pub database_path: String,
-	pub database_relative_dir: bool,
 	pub steam_web_api_key: String,
 	pub chat_group_id: u64,
 	pub chat_id: u64,
@@ -165,26 +160,22 @@ impl Config {
 			ini.write_to_file(&conf_path)?;
 		}
 
-		// Now it's safe to immutably borrow `ini`
-		let sec = ini.general_section();
-		let db_path = sec.get("database_path").unwrap().to_string();
-		let db_relative_dir = sec.get("database_relative_dir").unwrap().parse::<bool>().unwrap();
-		let steam_web_api_key = sec.get("steam_web_api_key").unwrap().to_string();
-		let chat_group_id = sec.get("chat_group_id").unwrap().parse::<u64>().unwrap_or(0);
-		let chat_id = sec.get("chat_id").unwrap().parse::<u64>().unwrap_or(0);
-		let steam_account = sec.get("steam_account").unwrap().to_string();
-		let steam_password = sec.get("steam_password").unwrap().to_string();
-		
+	// Now it's safe to immutably borrow `ini`
+	let sec = ini.general_section();
+	let steam_web_api_key = sec.get("steam_web_api_key").unwrap().to_string();
+	let chat_group_id = sec.get("chat_group_id").unwrap().parse::<u64>().unwrap_or(0);
+	let chat_id = sec.get("chat_id").unwrap().parse::<u64>().unwrap_or(0);
+	let steam_account = sec.get("steam_account").unwrap().to_string();
+	let steam_password = sec.get("steam_password").unwrap().to_string();
+	
 
-		Ok(Config {
-			database_path: db_path,
-			database_relative_dir: db_relative_dir,
-			steam_web_api_key,
-			chat_group_id,
-			chat_id,
-			steam_account,
-			steam_password,
-		})
+	Ok(Config {
+		steam_web_api_key,
+		chat_group_id,
+		chat_id,
+		steam_account,
+		steam_password,
+	})
 	}
 }
 

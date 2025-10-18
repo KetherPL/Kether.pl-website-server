@@ -15,17 +15,6 @@ mod REST;
 #[cfg(feature = "cfg")]
 mod config;
 
-#[cfg(feature = "rest_sqlite")]
-mod databases;
-#[cfg(feature = "rest_sqlite")]
-mod databases_rest;
-#[cfg(feature = "rest_sqlite")]
-mod db;
-#[cfg(feature = "rest_sqlite")]
-mod models;
-#[cfg(feature = "rest_sqlite")]
-mod schema;
-
 #[cfg(feature = "rest_steam")]
 mod steam_rest;
 

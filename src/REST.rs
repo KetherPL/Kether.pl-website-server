@@ -2,8 +2,6 @@
 
 #[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub"))]
 use crate::config::Config;
-#[cfg(feature = "rest_sqlite")]
-use crate::databases_rest::mount_database_routes;
 #[cfg(feature = "server_query")]
 use crate::LiveServerInfo::{live_server_info, live_server_info_kether};
 #[cfg(feature = "rest_steam")]
@@ -23,7 +21,6 @@ use rocket_cors::{AllowedOrigins, CorsOptions};
 /// 
 /// # Features
 /// * `rest_json_db` - Mounts JSON-based database REST endpoints (binds, commands, suggestions, voting)
-/// * `rest_sqlite` - Mounts legacy SQLite database REST endpoints (deprecated, use rest_json_db)
 /// * `rest_steam` - Mounts Steam-related REST endpoints
 /// * `rest_call_for_sub` - Mounts call-for-sub REST endpoints
 /// * `server_query` - Mounts LiveServerInfo REST endpoints
@@ -34,7 +31,6 @@ use rocket_cors::{AllowedOrigins, CorsOptions};
 /// * **Port**: 3001 (configured for NodeJS/React compatibility)
 /// * **CORS**: Configured for localhost, kether.pl, and specific IP addresses
 /// * **JSON Database**: In-memory with file-based persistence (if rest_json_db feature enabled)
-/// * **SQLite Database**: Connection pool for legacy support (if rest_sqlite feature enabled)
 /// * **Config**: Loads and manages application configuration from KISS.ini
 /// 
 /// # CORS Origins
@@ -46,15 +42,14 @@ use rocket_cors::{AllowedOrigins, CorsOptions};
 /// 
 /// # Routes
 /// * `/api` - JSON-based database REST endpoints (if rest_json_db enabled)
-///   - `/api/binds/*` - Binds CRUD operations
+///   - `/api/binds/*` - Binds CRUD operations with embedded voting
 ///   - `/api/commands/*` - Commands CRUD operations
 ///   - `/api/bind_suggestions/*` - Bind suggestions CRUD operations
 ///   - `/api/bind_votings/*` - Voting operations on binds
-/// * `/oldapi` - Legacy SQLite database REST endpoints (if rest_sqlite enabled)
 /// * `/api/LiveServerInfo` - Server query endpoints (if server_query enabled)
 /// * `/api/steam` - Steam REST endpoints (if rest_steam enabled)
 /// * `/api/callForSub` - Call-for-sub endpoints (if rest_call_for_sub enabled)
-/// * `/fastdl` - FastDL file server (if fastdl enabled)
+/// * `/fastdl` - FastDL file server for Source/GoldSrc content (if fastdl enabled)
 /// * `/` - Satanixon-specific endpoints (if sat enabled)
 /// 
 /// # Example
@@ -89,7 +84,7 @@ pub fn rocket() -> Rocket<Build> {
 		.configure(rocket::Config::figment().merge(("port", 3001))) // NodeJS / React port
 		.attach(cors.clone());
 
-	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "rest_sqlite"))]
+	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub"))]
 	{
 		let config = Config::load().expect("Failed to load configuration");
 		rocket_build = rocket_build.manage(config);
@@ -99,12 +94,6 @@ pub fn rocket() -> Rocket<Build> {
 		let json_db = JsonDatabase::load().expect("Failed to load JSON database");
 		rocket_build = rocket_build.manage(json_db);
 		rocket_build = rocket_build.mount("/api", mount_json_routes());
-	}
-	#[cfg(feature = "rest_sqlite")]
-	{
-		let db_pool = crate::db::database::establish_connection_pool();
-		rocket_build = rocket_build.manage(db_pool);
-		rocket_build = rocket_build.mount("/oldapi", mount_database_routes());
 	}
 	#[cfg(feature = "server_query")]
 	{

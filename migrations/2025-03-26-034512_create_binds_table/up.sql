@@ -1,6 +1,0 @@
--- Your SQL goes here
-CREATE TABLE binds (
-    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-    author TEXT NOT NULL,
-    text TEXT NOT NULL UNIQUE
-);

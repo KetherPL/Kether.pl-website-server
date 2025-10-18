@@ -8,7 +8,9 @@ use crate::databases_rest::mount_database_routes;
 use crate::LiveServerInfo::{live_server_info, live_server_info_kether};
 #[cfg(feature = "rest_steam")]
 use crate::steam_rest::mount_steam_routes;
+#[cfg(feature = "rest_json_db")]
 use crate::json_cmds_binds_rest::mount_json_routes;
+#[cfg(feature = "rest_json_db")]
 use crate::json_storage::JsonDatabase;
 use rocket::{fs::{FileServer, Options}, launch, routes, Build, Rocket};
 use rocket_cors::{AllowedOrigins, CorsOptions};

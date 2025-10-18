@@ -1,0 +1,50 @@
+{
+  "1": {
+    "command": "!r, !nr || F1, F2",
+    "description": "Sets your ready status"
+  },
+  "2": {
+    "command": "!s",
+    "description": "Switches you to spectator's team"
+  },
+  "3": {
+    "command": "!vts <nick>",
+    "description": "Calls a voting to switch <nick> to spectators"
+  },
+  "4": {
+    "command": "!hats, !hat",
+    "description": "(VIP) Opens a menu with wearable hats"
+  },
+  "5": {
+    "command": "!voteboss <tank> <witch>",
+    "description": "Calls a voting to set certain tank and witch spawn points (in percentages)"
+  },
+  "6": {
+    "command": "!health, !bonus",
+    "description": "Shows current expected point bonus"
+  },
+  "7": {
+    "command": "!binfo, !mapinfo, !minfo",
+    "description": "Shows point bonus rules for current map"
+  },
+  "8": {
+    "command": "!tank, !boss",
+    "description": "Shows current tank and witch spawn points (in percentages)"
+  },
+  "9": {
+    "command": "!current",
+    "description": "Shows current flow (in percentages)"
+  },
+  "10": {
+    "command": "!mvp",
+    "description": "Shows your current statistics (damage done to SI, CI, teammates)"
+  },
+  "12": {
+    "command": "!mix",
+    "description": "Calls a voting to mix teams"
+  },
+  "13": {
+    "command": "!bonus",
+    "description": "Shows current point bonus for each team"
+  }
+}

@@ -91,7 +91,9 @@ pub fn rocket() -> Rocket<Build> {
 	}
 	#[cfg(feature = "rest_json_db")]
 	{
-		let json_db = JsonDatabase::load().expect("Failed to load JSON database");
+		// Load JSON database using smol runtime
+		let json_db = smol::block_on(JsonDatabase::load())
+			.expect("Failed to load JSON database");
 		rocket_build = rocket_build.manage(json_db);
 		rocket_build = rocket_build.mount("/api", mount_json_routes());
 	}

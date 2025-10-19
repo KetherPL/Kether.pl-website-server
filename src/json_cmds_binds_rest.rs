@@ -127,8 +127,8 @@ pub fn get_all_binds(db: &State<JsonDatabase>) -> Result<Json<Vec<Bind>>, Status
 }
 
 #[post("/binds/addBind", data = "<new_bind>")]
-pub fn create_new_bind(db: &State<JsonDatabase>, new_bind: Json<NewBind>) -> Result<Json<Bind>, Status> {
-    db.create_bind(new_bind.author.clone(), new_bind.text.clone())
+pub async fn create_new_bind(db: &State<JsonDatabase>, new_bind: Json<NewBind>) -> Result<Json<Bind>, Status> {
+    db.create_bind(new_bind.author.clone(), new_bind.text.clone()).await
         .map(Json)
         .map_err(|e| {
             eprintln!("Error creating bind: {}", e);
@@ -141,8 +141,8 @@ pub fn create_new_bind(db: &State<JsonDatabase>, new_bind: Json<NewBind>) -> Res
 }
 
 #[post("/binds/deleteBind", data = "<bind_to_delete>")]
-pub fn delete_existing_bind(db: &State<JsonDatabase>, bind_to_delete: Json<DelBind>) -> Result<Json<usize>, Status> {
-    db.delete_bind(bind_to_delete.id)
+pub async fn delete_existing_bind(db: &State<JsonDatabase>, bind_to_delete: Json<DelBind>) -> Result<Json<usize>, Status> {
+    db.delete_bind(bind_to_delete.id).await
         .map(|_| Json(1))
         .map_err(|e| {
             eprintln!("Error deleting bind: {}", e);
@@ -151,14 +151,14 @@ pub fn delete_existing_bind(db: &State<JsonDatabase>, bind_to_delete: Json<DelBi
 }
 
 #[post("/binds/updateBind", data = "<bind_to_update>")]
-pub fn update_existing_bind(db: &State<JsonDatabase>, bind_to_update: Json<Bind>) -> Result<Json<Bind>, Status> {
+pub async fn update_existing_bind(db: &State<JsonDatabase>, bind_to_update: Json<Bind>) -> Result<Json<Bind>, Status> {
     db.update_bind(
         bind_to_update.id,
         bind_to_update.author.clone(),
         bind_to_update.text.clone(),
         bind_to_update.upvote.clone(),
         bind_to_update.downvote.clone(),
-    )
+    ).await
     .map(Json)
     .map_err(|e| {
         eprintln!("Error updating bind: {}", e);
@@ -210,7 +210,7 @@ pub fn get_all_bind_suggestions(db: &State<JsonDatabase>) -> Result<Json<Vec<Bin
 }
 
 #[post("/bind_suggestions/addBindSuggestion", data = "<new_bind_suggestion>")]
-pub fn create_new_bind_suggestion(
+pub async fn create_new_bind_suggestion(
     db: &State<JsonDatabase>,
     new_bind_suggestion: Json<NewBindSuggestion>,
 ) -> Result<Json<BindSuggestion>, Status> {
@@ -218,7 +218,7 @@ pub fn create_new_bind_suggestion(
         new_bind_suggestion.author.clone(),
         new_bind_suggestion.text.clone(),
         new_bind_suggestion.proposed_by.clone(),
-    )
+    ).await
     .map(Json)
     .map_err(|e| {
         eprintln!("Error creating bind suggestion: {}", e);
@@ -231,11 +231,11 @@ pub fn create_new_bind_suggestion(
 }
 
 #[post("/bind_suggestions/deleteBindSuggestion", data = "<bind_suggestion_to_delete>")]
-pub fn delete_existing_bind_suggestion(
+pub async fn delete_existing_bind_suggestion(
     db: &State<JsonDatabase>,
     bind_suggestion_to_delete: Json<DelBindSuggestion>,
 ) -> Result<Json<usize>, Status> {
-    db.delete_bind_suggestion(bind_suggestion_to_delete.id)
+    db.delete_bind_suggestion(bind_suggestion_to_delete.id).await
         .map(|_| Json(1))
         .map_err(|e| {
             eprintln!("Error deleting bind suggestion: {}", e);
@@ -244,7 +244,7 @@ pub fn delete_existing_bind_suggestion(
 }
 
 #[post("/bind_suggestions/updateBindSuggestion", data = "<bind_suggestion_to_update>")]
-pub fn update_existing_bind_suggestion(
+pub async fn update_existing_bind_suggestion(
     db: &State<JsonDatabase>,
     bind_suggestion_to_update: Json<BindSuggestion>,
 ) -> Result<Json<BindSuggestion>, Status> {
@@ -253,7 +253,7 @@ pub fn update_existing_bind_suggestion(
         bind_suggestion_to_update.author.clone(),
         bind_suggestion_to_update.text.clone(),
         bind_suggestion_to_update.proposed_by.clone(),
-    )
+    ).await
     .map(Json)
     .map_err(|e| {
         eprintln!("Error updating bind suggestion: {}", e);
@@ -305,8 +305,8 @@ pub fn get_all_commands(db: &State<JsonDatabase>) -> Result<Json<Vec<Command>>, 
 }
 
 #[post("/commands/addCommand", data = "<new_command>")]
-pub fn create_new_command(db: &State<JsonDatabase>, new_command: Json<NewCommand>) -> Result<Json<Command>, Status> {
-    db.create_command(new_command.command.clone(), new_command.description.clone())
+pub async fn create_new_command(db: &State<JsonDatabase>, new_command: Json<NewCommand>) -> Result<Json<Command>, Status> {
+    db.create_command(new_command.command.clone(), new_command.description.clone()).await
         .map(Json)
         .map_err(|e| {
             eprintln!("Error creating command: {}", e);
@@ -319,8 +319,8 @@ pub fn create_new_command(db: &State<JsonDatabase>, new_command: Json<NewCommand
 }
 
 #[post("/commands/deleteCommand", data = "<command_to_delete>")]
-pub fn delete_existing_command(db: &State<JsonDatabase>, command_to_delete: Json<DelCommand>) -> Result<Json<usize>, Status> {
-    db.delete_command(command_to_delete.id)
+pub async fn delete_existing_command(db: &State<JsonDatabase>, command_to_delete: Json<DelCommand>) -> Result<Json<usize>, Status> {
+    db.delete_command(command_to_delete.id).await
         .map(|_| Json(1))
         .map_err(|e| {
             eprintln!("Error deleting command: {}", e);
@@ -329,12 +329,12 @@ pub fn delete_existing_command(db: &State<JsonDatabase>, command_to_delete: Json
 }
 
 #[post("/commands/updateCommand", data = "<command_to_update>")]
-pub fn update_existing_command(db: &State<JsonDatabase>, command_to_update: Json<Command>) -> Result<Json<Command>, Status> {
+pub async fn update_existing_command(db: &State<JsonDatabase>, command_to_update: Json<Command>) -> Result<Json<Command>, Status> {
     db.update_command(
         command_to_update.id,
         command_to_update.command.clone(),
         command_to_update.description.clone(),
-    )
+    ).await
     .map(Json)
     .map_err(|e| {
         eprintln!("Error updating command: {}", e);
@@ -438,7 +438,7 @@ pub fn get_all_bind_votings(db: &State<JsonDatabase>) -> Result<Json<Vec<BindVot
 }
 
 #[post("/bind_votings/addBindVoting", data = "<new_bind_voting>")]
-pub fn create_new_bind_voting(
+pub async fn create_new_bind_voting(
     db: &State<JsonDatabase>,
     new_bind_voting: Json<NewBindVoting>,
 ) -> Result<Json<BindVoting>, Status> {
@@ -446,7 +446,7 @@ pub fn create_new_bind_voting(
         new_bind_voting.voted_bind_id,
         new_bind_voting.voter_steam_id,
         &new_bind_voting.vote,
-    )
+    ).await
     .map_err(|e| {
         eprintln!("Error adding vote: {}", e);
         if e.contains("not found") {
@@ -466,14 +466,14 @@ pub fn create_new_bind_voting(
 }
 
 #[post("/bind_votings/deleteBindVoting", data = "<bind_voting_to_delete>")]
-pub fn delete_existing_bind_voting(
+pub async fn delete_existing_bind_voting(
     db: &State<JsonDatabase>,
     bind_voting_to_delete: Json<DelBindVotingByUser>,
 ) -> Result<Json<usize>, Status> {
     db.remove_vote(
         bind_voting_to_delete.voted_bind_id,
         bind_voting_to_delete.voter_steam_id,
-    )
+    ).await
     .map(|_| Json(1))
     .map_err(|e| {
         eprintln!("Error removing vote: {}", e);
@@ -498,7 +498,7 @@ pub fn options_delete_existing_bind_voting() -> Status {
 // --- By ID (PUT endpoints) ---
 
 #[put("/binds/<bind_id>", data = "<bind_to_update>")]
-pub fn update_existing_bind_by_id(
+pub async fn update_existing_bind_by_id(
     db: &State<JsonDatabase>,
     bind_id: i32,
     bind_to_update: Json<Bind>,
@@ -509,7 +509,7 @@ pub fn update_existing_bind_by_id(
         bind_to_update.text.clone(),
         bind_to_update.upvote.clone(),
         bind_to_update.downvote.clone(),
-    )
+    ).await
     .map(Json)
     .map_err(|e| {
         eprintln!("Error updating bind by ID: {}", e);
@@ -524,7 +524,7 @@ pub fn update_existing_bind_by_id(
 }
 
 #[put("/bind_suggestions/<bind_suggestion_id>", data = "<bind_suggestion_to_update>")]
-pub fn update_existing_bind_suggestion_by_id(
+pub async fn update_existing_bind_suggestion_by_id(
     db: &State<JsonDatabase>,
     bind_suggestion_id: i32,
     bind_suggestion_to_update: Json<BindSuggestion>,
@@ -534,7 +534,7 @@ pub fn update_existing_bind_suggestion_by_id(
         bind_suggestion_to_update.author.clone(),
         bind_suggestion_to_update.text.clone(),
         bind_suggestion_to_update.proposed_by.clone(),
-    )
+    ).await
     .map(Json)
     .map_err(|e| {
         eprintln!("Error updating bind suggestion by ID: {}", e);
@@ -549,7 +549,7 @@ pub fn update_existing_bind_suggestion_by_id(
 }
 
 #[put("/commands/<command_id>", data = "<command_to_update>")]
-pub fn update_existing_command_by_id(
+pub async fn update_existing_command_by_id(
     db: &State<JsonDatabase>,
     command_id: i32,
     command_to_update: Json<Command>,
@@ -558,7 +558,7 @@ pub fn update_existing_command_by_id(
         command_id,
         command_to_update.command.clone(),
         command_to_update.description.clone(),
-    )
+    ).await
     .map(Json)
     .map_err(|e| {
         eprintln!("Error updating command by ID: {}", e);

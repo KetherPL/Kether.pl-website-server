@@ -106,6 +106,11 @@ impl SteamBot {
     /// steam_bot.login(&config).await?;
     /// ```
     pub async fn login(&self, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+        // Validate credentials before attempting login
+        if config.steam_account.is_empty() || config.steam_password.is_empty() {
+            return Err("Steam credentials are not configured in config.toml".into());
+        }
+        
         // Update connection state
         {
             let mut state_guard = self.connection_state.lock().await;
@@ -584,11 +589,12 @@ impl Default for SteamBot {
 /// that can be accessed by other parts of the application.
 /// 
 /// The function performs the following steps:
-/// 1. Loads the configuration from KISS.ini
-/// 2. Creates a new SteamBot instance
-/// 3. Initializes the global SteamBot instance for external access
-/// 4. Logs into Steam using the provided credentials
-/// 5. Keeps the instance alive with periodic health checks
+/// 1. Loads the configuration from config.toml
+/// 2. Validates Steam credentials are provided
+/// 3. Creates a new SteamBot instance
+/// 4. Initializes the global SteamBot instance for external access
+/// 5. Logs into Steam using the provided credentials
+/// 6. Keeps the instance alive with periodic health checks
 /// 
 /// # Returns
 /// * `Ok(())` - Never returns successfully (runs indefinitely)
@@ -607,6 +613,27 @@ pub async fn main() -> Result<(), String> {
         Ok(config) => config,
         Err(e) => return Err(format!("Failed to load config: {}", e)),
     };
+    
+    // Check if Steam credentials are configured
+    if config.steam_account.is_empty() || config.steam_password.is_empty() {
+        println!("⚠️ No Steam account username and/or password is provided in the config. Call For Sub won't be available.");
+        println!("   To enable Call For Sub functionality, set `steam.bot.username` and `steam.bot.password` in `config.toml`");
+        
+        // Initialize global config cache even though we're not logging in
+        CONFIG_CACHE.set(config).ok();
+        
+        // Keep running but don't attempt to login
+        println!("SteamBot running in disabled mode...");
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Shutdown signal received, stopping SteamBot...");
+                    break;
+                }
+            }
+        }
+        return Ok(());
+    }
     
     // Create SteamBot instance
     let steam_bot = Arc::new(SteamBot::new());
@@ -674,7 +701,7 @@ mod tests {
     /// * `Err(Box<dyn std::error::Error>)` - If any operation fails
     /// 
     /// # Note
-    /// This test requires valid Steam credentials in the KISS.ini file.
+    /// This test requires valid Steam credentials in the config.toml file.
     /// The test will fail if the credentials are invalid or if the Steam
     /// service is unavailable.
     #[tokio::test]

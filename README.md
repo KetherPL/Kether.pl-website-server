@@ -58,7 +58,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
 *   **Security:**
     *   Redirects root path (`/`) to the Kether.pl frontend.
 *   **Configuration:**
-    *   Uses an `KISS.ini` configuration file to manage settings like:
+    *   Uses a `config.toml` configuration file with clean, nested structure:
         *   Steam Web API key
         *   Steam account credentials for bot functionality
         *   Steam group chat IDs for message delivery
@@ -83,7 +83,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
 *   **SC_Sub_Poster:** Custom library for Steam chat functionality and bot integration.
 *   **rocket_cors:** CORS support for the Rocket web server.
 *   **clap:** Command-line argument parsing.
-*   **rust-ini:** Configuration file parsing (KISS.ini).
+*   **toml:** Configuration file parsing (config.toml).
 *   **colored:** Terminal output coloring.
 *   **tokio:** Async runtime for concurrent operations.
 *   **smol:** Async runtime for efficient file system operations in FastDL server.
@@ -97,14 +97,17 @@ This project is the backend server for the Kether.pl website, a homepage for the
     git clone <repository_url>
     cd Kether.pl-website-server
     ```
-3.  **Configure `KISS.ini`:** Create a `KISS.ini` file in the project's root directory (or it will be created automatically on first run).
-    *   Obtain a Steam Web API key from Steam and set it in `steam_web_api_key`.
-    *   For Steam Bot functionality, add your Steam account credentials:
-        *   Set `steam_account` to your Steam username
-        *   Set `steam_password` to your Steam password
-    *   For call-for-sub functionality, configure the Steam group chat:
-        *   Set `chat_group_id` to your Steam group ID
-        *   Set `chat_id` to the specific chat channel ID
+3.  **Configure `config.toml`:** Create a `config.toml` file in the project's root directory (or it will be created automatically on first run).
+    *   The file will be auto-generated with helpful comments on first run
+    *   **Steam Web API:**
+        *   Get your API key from: https://steamcommunity.com/dev/apikey
+        *   Set `steam.web_api_key = "YOUR_KEY_HERE"`
+    *   **Steam Bot** (for !sub posting):
+        *   Set `steam.bot.username = "your_steam_username"`
+        *   Set `steam.bot.password = "your_steam_password"`
+    *   **Steam Chat:**
+        *   Set `steam.chat.group_id` to your Steam group ID
+        *   Set `steam.chat.chat_id` to the specific chat channel ID
     *   **Note:** JSON database files (`cmds.json`, `binds.json`, `bind_sgs.json`) will be created automatically in the executable directory on first run.
 4.  **Set up FastDL (Optional):**
     If you want to use the FastDL server feature:
@@ -141,6 +144,37 @@ This project is the backend server for the Kether.pl website, a homepage for the
         * `/api/callForSub` - Call for substitute player functionality
     * **FastDL Server:** Access your game content at `http://localhost:3001/fastdl/...` (if FastDL feature is enabled).
     * **Directory Listings:** Browse folders at `http://localhost:3001/fastdl/your-folder/` to see automatic directory listings.
+
+## Configuration File (config.toml)
+
+The server uses TOML format for configuration with a clean, nested structure:
+
+```toml
+# Kether.pl Server Configuration
+
+[steam]
+# Steam Web API key for fetching user data (name, avatar, profile, etc.)
+# Get your key from: https://steamcommunity.com/dev/apikey
+web_api_key = "YOUR_STEAM_API_KEY"
+
+# Steam Bot Configuration
+# These credentials are used for the bot that posts !sub requests to Steam group chat
+[steam.bot]
+username = "your_steam_username"
+password = "your_steam_password"
+
+# Steam Group Chat Configuration
+# IDs for the Steam group chat where !sub requests are posted
+[steam.chat]
+group_id = 103582791429521408
+chat_id = 103582791429521409
+```
+
+**Features:**
+- ✅ Auto-generated on first run with helpful comments
+- ✅ Type-safe deserialization with serde
+- ✅ Nested sections for better organization
+- ✅ Clean, modern TOML format
 
 ## JSON Database Structure
 

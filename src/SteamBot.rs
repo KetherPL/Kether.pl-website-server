@@ -5,7 +5,7 @@ use SC_Sub_Poster::{LogOn, ChatRoomClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
-use std::time::{Duration, Instant};
+use tokio::time::{Duration, Instant};
 
 // Global SteamBot instance - thread-safe initialization
 static STEAM_BOT: OnceCell<Arc<SteamBot>> = OnceCell::new();

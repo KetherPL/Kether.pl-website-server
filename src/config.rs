@@ -1,32 +1,102 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use ini::Ini;
-use std::{path::PathBuf, fmt};
+use std::{path::PathBuf, fmt, fs};
 use colored::Colorize;
+use rocket::serde::{Deserialize, Serialize};
 
 /// Configuration file name constant
-/// 
-/// The name of the configuration file that must be in the same directory
-/// as the executable or in its subdirectory.
-pub const CONF_FILE_NAME: &str = "KISS.ini";
+pub const CONF_FILE_NAME: &str = "config.toml";
 
-/// Default database path constant
+/// Main configuration structure loaded from config.toml
 /// 
-/// Hardcoded database path in case the DB_PATH environment variable
-/// would be unavailable. Used as fallback for database configuration.
-pub const DATABASE_PATH: &str = "kether.sqlite";
+/// This struct holds all configuration values for the Kether Internal Services Server.
+/// It uses nested structures for better organization.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ConfigFile {
+	#[serde(default)]
+	steam: SteamConfig,
+}
 
-/// Database relative directory setting
-/// 
-/// Determines if the database is in the same directory as the executable.
-/// If true, just put a file NAME in the DATABASE_PATH.
-/// If false, use any directory that the shell is already in.
-pub const DATABASE_RELATIVE_DIR: bool = true;
+/// Steam-related configuration
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct SteamConfig {
+	/// Steam Web API key for fetching user data
+	#[serde(default)]
+	web_api_key: String,
+	
+	/// Steam bot configuration
+	#[serde(default)]
+	bot: BotConfig,
+	
+	/// Steam chat configuration
+	#[serde(default)]
+	chat: ChatConfig,
+}
 
-/// Configuration structure for the Kether Internal Services Server
+/// Steam bot credentials
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct BotConfig {
+	#[serde(default)]
+	username: String,
+	
+	#[serde(default)]
+	password: String,
+}
+
+/// Steam chat configuration
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ChatConfig {
+	#[serde(default)]
+	group_id: u64,
+	
+	#[serde(default)]
+	chat_id: u64,
+}
+
+impl Default for ConfigFile {
+	fn default() -> Self {
+		ConfigFile {
+			steam: SteamConfig::default(),
+		}
+	}
+}
+
+impl Default for SteamConfig {
+	fn default() -> Self {
+		SteamConfig {
+			web_api_key: String::new(),
+			bot: BotConfig::default(),
+			chat: ChatConfig::default(),
+		}
+	}
+}
+
+impl Default for BotConfig {
+	fn default() -> Self {
+		BotConfig {
+			username: String::new(),
+			password: String::new(),
+		}
+	}
+}
+
+impl Default for ChatConfig {
+	fn default() -> Self {
+		ChatConfig {
+			group_id: 0,
+			chat_id: 0,
+		}
+	}
+}
+
+/// Public configuration structure for the Kether Internal Services Server
 /// 
-/// This struct holds all configuration values loaded from the KISS.ini file.
-/// It provides a centralized way to access all application settings.
+/// This struct holds all configuration values in a flat structure
+/// for easy access throughout the application.
 /// 
 /// # Fields
 /// * `steam_web_api_key` - Steam Web API key for fetching user data
@@ -34,12 +104,6 @@ pub const DATABASE_RELATIVE_DIR: bool = true;
 /// * `chat_id` - Steam chat ID for message sending
 /// * `steam_account` - Steam account username for bot login
 /// * `steam_password` - Steam account password for bot login
-/// 
-/// # Example
-/// ```rust
-/// let config = Config::load()?;
-/// println!("Steam API key: {}", config.steam_web_api_key);
-/// ```
 #[derive(Debug)]
 pub struct Config {
 	pub steam_web_api_key: String,
@@ -50,132 +114,60 @@ pub struct Config {
 }
 
 impl Config {
-	/// Loads configuration from the KISS.ini file
+	/// Loads configuration from config.toml file
 	/// 
-	/// This function reads the configuration file and creates a Config struct
-	/// with all the necessary settings. If the config file doesn't exist,
-	/// it creates a new one with default values.
-	/// 
-	/// The function performs the following operations:
-	/// 1. Locates the KISS.ini file in the executable directory
-	/// 2. Loads existing configuration or creates a new one
-	/// 3. Validates and adds missing configuration keys
-	/// 4. Parses all values into the appropriate types
-	/// 5. Returns a Config struct with all settings
+	/// This function reads the TOML configuration file and creates a Config struct.
+	/// If the file doesn't exist, it creates a default one with helpful comments.
 	/// 
 	/// # Returns
 	/// * `Ok(Config)` - Successfully loaded configuration
 	/// * `Err(Box<dyn std::error::Error>)` - If loading or parsing fails
-	/// 
-	/// # Example
-	/// ```rust
-	/// match Config::load() {
-	///     Ok(config) => {
-	///         println!("Configuration loaded successfully");
-	///         // Use config.database_path, config.steam_web_api_key, etc.
-	///     },
-	///     Err(e) => eprintln!("Failed to load config: {}", e),
-	/// }
-	/// ```
 	pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
 		let conf_path = exe_dir()?.join(CONF_FILE_NAME);
-
-		let mut ini = match Ini::load_from_file(&conf_path) {
-			Ok(loaded_ini) => {
-				println!("Config file loaded successfully.");
-				loaded_ini
-			}
-			Err(e) => {
-				eprintln!("Error loading config file: {}", e);
-				println!("Creating new config file at: {}", conf_path.display());
-				let mut newconf = Ini::new();
-				newconf.with_general_section()
-					.set(";; The database.sqlite file path or file name if the database_relative_dir option is true. ", "")
-					.set("database_path", DATABASE_PATH)
-					.set(";; Is the database in the same dir as the executable? If yes, don't forget to put just a file NAME in the database_path option. ", "")
-					.set(";; False ", " any directory that the shell is already in")
-					.set("database_relative_dir", DATABASE_RELATIVE_DIR.to_string())
-					.set(";; Steam Web API key that will be utilized to fetch Steam user data (e.g. name, avatar, etc).", "")
-					.set("steam_web_api_key", "")
-					.set(";; Group ID and Chat ID that will be utilized to access the selected Steam Group Chat (for posting !sub)", "")
-					.set("chat_group_id", "")
-					.set("chat_id", "")
-					.set(";; Steam account login data for the bot instance (for posting !sub)", "")
-					.set("steam_account", "")
-					.set("steam_password", "");
-				newconf.write_to_file(&conf_path)?;
-				newconf
-			}
-		};
-
-		let mut changed = false;
-		{
-			let sec = ini.general_section_mut();
-
-			if !sec.contains_key("database_path") {
-				eprintln!("Key 'database_path' not found in {}. Adding with default value: {}", CONF_FILE_NAME, DATABASE_PATH);
-				sec.insert("database_path", DATABASE_PATH);
-				changed = true;
-			}
-
-			if !sec.contains_key("database_relative_dir") {
-				eprintln!("Key 'database_relative_dir' not found in {}. Adding with default value: {}", CONF_FILE_NAME, DATABASE_RELATIVE_DIR);
-				sec.insert("database_relative_dir", DATABASE_RELATIVE_DIR.to_string());
-				changed = true;
-			}
-
-			if !sec.contains_key("steam_web_api_key") {
-				eprintln!("Key 'steam_web_api_key' not found in {}. Adding...", CONF_FILE_NAME);
-				sec.insert("steam_web_api_key", "");
-				changed = true;
-			}
-
-			if !sec.contains_key("chat_group_id") {
-				eprintln!("Key 'chat_group_id' not found in {}. Adding...", CONF_FILE_NAME);
-				sec.insert("chat_group_id", "");
-				changed = true;
-			}
-
-			if !sec.contains_key("chat_id") {
-				eprintln!("Key 'chat_id' not found in {}. Adding...", CONF_FILE_NAME);
-				sec.insert("chat_id", "");
-				changed = true;
-			}
-
-			if !sec.contains_key("steam_account") {
-				eprintln!("Key 'steam_account' not found in {}. Adding...", CONF_FILE_NAME);
-				sec.insert("steam_account", "");
-				changed = true;
-			}
-
-			if !sec.contains_key("steam_password") {
-				eprintln!("Key 'steam_password' not found in {}. Adding...", CONF_FILE_NAME);
-				sec.insert("steam_password", "");
-				changed = true;
-			}
-		} // sec goes out of scope here, releasing the mutable borrow
-
-		if changed {
-			eprintln!("Saving updated config file to: {}", conf_path.display());
-			ini.write_to_file(&conf_path)?;
+		
+		// Create default config if it doesn't exist
+		if !conf_path.exists() {
+			println!("Creating default config file at: {}", conf_path.display());
+			let default_config = ConfigFile::default();
+			let toml_content = Self::generate_toml_with_comments(&default_config);
+			fs::write(&conf_path, toml_content)?;
 		}
-
-	// Now it's safe to immutably borrow `ini`
-	let sec = ini.general_section();
-	let steam_web_api_key = sec.get("steam_web_api_key").unwrap().to_string();
-	let chat_group_id = sec.get("chat_group_id").unwrap().parse::<u64>().unwrap_or(0);
-	let chat_id = sec.get("chat_id").unwrap().parse::<u64>().unwrap_or(0);
-	let steam_account = sec.get("steam_account").unwrap().to_string();
-	let steam_password = sec.get("steam_password").unwrap().to_string();
+		
+		// Load and parse TOML
+		let content = fs::read_to_string(&conf_path)?;
+		let config_file: ConfigFile = toml::from_str(&content)?;
+		
+		Ok(Config {
+			steam_web_api_key: config_file.steam.web_api_key,
+			chat_group_id: config_file.steam.chat.group_id,
+			chat_id: config_file.steam.chat.chat_id,
+			steam_account: config_file.steam.bot.username,
+			steam_password: config_file.steam.bot.password,
+		})
+	}
 	
+	/// Generate TOML content with helpful comments
+	fn generate_toml_with_comments(_config: &ConfigFile) -> String {
+		r#"# Kether.pl Kether Internal Services Server Configuration
+# This file is automatically generated. Edit values as needed.
 
-	Ok(Config {
-		steam_web_api_key,
-		chat_group_id,
-		chat_id,
-		steam_account,
-		steam_password,
-	})
+[steam]
+# Steam Web API key for fetching user data (name, avatar, profile, etc.)
+# Get your key from: https://steamcommunity.com/dev/apikey
+web_api_key = ""
+
+# Steam Bot Configuration
+# These credentials are used for the bot that posts !sub requests to Steam group chat
+[steam.bot]
+username = ""
+password = ""
+
+# Steam Group Chat Configuration
+# IDs for the Steam group chat where !sub requests are posted
+[steam.chat]
+group_id = 0
+chat_id = 0
+"#.to_string()
 	}
 }
 

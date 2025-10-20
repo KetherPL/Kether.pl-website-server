@@ -17,7 +17,7 @@ colored = { version = "3.0.0", optional = true }
 gamedig = { version = "0.6.1", optional = true }
 rocket = { version = "0.5.1", features = ["json"], optional = true, default-features = false }
 rocket_cors = { version = "0.6.0", optional = true }
-rust-ini = { version = "0.21.1", features = ["inline-comment"], optional = true }
+toml = { version = "0.8", optional = true }
 steam-rs = { version = "0.5.1", optional = true }
 tokio = { version = "1.46.1", features = ["rt-multi-thread", "macros"] }
 once_cell = "1.19.0"
@@ -41,5 +41,5 @@ default = ["kether_meta", "sat"] # Features starter pack
         rest_steam = ["cfg", "rest_api", "dep:steam-rs"] # REST API – Steam part for website (fetch userdata, check if owns appid=550 (L4D2))
         server_query = ["dep:gamedig"] # Query L4D2 servers (either through CLI or REST API)
         rest_call_for_sub = ["cfg", "rest_api", "dep:SC_Sub_Poster"] # REST API – Uses NodeJS to post `!sub` requests on the Steam Group Chat
-            cfg = ["dep:colored", "dep:rust-ini"] # KISS.ini config – database file path, Steam Web API key
+            cfg = ["dep:colored", "dep:toml"] # config.toml – Steam Web API key, bot credentials, chat IDs
             rest_api = ["dep:rocket", "dep:rocket_cors"] # Base REST API support

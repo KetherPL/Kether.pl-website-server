@@ -86,7 +86,7 @@ pub fn rocket() -> Rocket<Build> {
 
 	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub"))]
 	{
-		let config = Config::load().expect("Failed to load configuration");
+		let config = smol::block_on(Config::load()).expect("Failed to load configuration");
 		rocket_build = rocket_build.manage(config);
 	}
 	#[cfg(feature = "rest_json_db")]

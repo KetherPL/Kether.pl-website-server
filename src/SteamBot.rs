@@ -35,7 +35,7 @@ pub enum ConnectionState {
 /// 
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let config = Config::load()?;
+///     let config = Config::load().await?;
 ///     let steam_bot = SteamBot::new();
 ///     
 ///     // Login to Steam
@@ -102,7 +102,7 @@ impl SteamBot {
     /// 
     /// # Example
     /// ```rust
-    /// let config = Config::load()?;
+    /// let config = Config::load().await?;
     /// let steam_bot = SteamBot::new();
     /// steam_bot.login(&config).await?;
     /// ```
@@ -167,7 +167,7 @@ impl SteamBot {
     /// 
     /// # Example
     /// ```rust
-    /// let config = Config::load()?;
+    /// let config = Config::load().await?;
     /// let steam_bot = SteamBot::new();
     /// steam_bot.login(&config).await?;
     /// steam_bot.send_message("!sub", &config).await?;
@@ -221,7 +221,7 @@ impl SteamBot {
     /// The instance must be initialized by calling `main()` first.
     pub async fn send_message_global(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(steam_bot) = STEAM_BOT.get() {
-            let config = CONFIG_CACHE.get_or_init(|| Config::load().expect("Failed to load config"));
+            let config = CONFIG_CACHE.get().expect("Config not initialized - SteamBot::main() must be called first");
             
             // Try to send message with immediate recovery on connection failures
             match steam_bot.send_message(message, config).await {
@@ -275,7 +275,7 @@ impl SteamBot {
     /// The instance must be initialized by calling `main()` first.
     pub async fn send_message_global_with_recovery(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(steam_bot) = STEAM_BOT.get() {
-            let config = CONFIG_CACHE.get_or_init(|| Config::load().expect("Failed to load config"));
+            let config = CONFIG_CACHE.get().expect("Config not initialized - SteamBot::main() must be called first");
             steam_bot.send_message_with_recovery(message, config).await
         } else {
             Err("SteamBot not initialized".into())
@@ -610,7 +610,7 @@ impl Default for SteamBot {
 /// ```
 pub async fn main() -> Result<(), String> {
     // Load configuration
-    let config = match crate::config::Config::load() {
+    let config = match crate::config::Config::load().await {
         Ok(config) => config,
         Err(e) => return Err(format!("Failed to load config: {}", e)),
     };
@@ -753,7 +753,7 @@ mod tests {
     /// service is unavailable.
     #[tokio::test]
     async fn test_send_message() -> Result<(), Box<dyn std::error::Error>> {
-        let config = Config::load()?;
+        let config = Config::load().await?;
         let steam_bot = SteamBot::new();
         steam_bot.login(&config).await?;
         let result = steam_bot.send_message("!sub", &config).await;

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::{path::PathBuf, fmt, fs};
+use std::{path::PathBuf, fmt};
 use colored::Colorize;
 use rocket::serde::{Deserialize, Serialize};
+use smol::fs;
 
 /// Configuration file name constant
 pub const CONF_FILE_NAME: &str = "config.toml";
@@ -122,19 +123,19 @@ impl Config {
 	/// # Returns
 	/// * `Ok(Config)` - Successfully loaded configuration
 	/// * `Err(Box<dyn std::error::Error>)` - If loading or parsing fails
-	pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
+	pub async fn load() -> Result<Self, Box<dyn std::error::Error>> {
 		let conf_path = exe_dir()?.join(CONF_FILE_NAME);
 		
 		// Create default config if it doesn't exist
-		if !conf_path.exists() {
+		if !smol::fs::metadata(&conf_path).await.is_ok() {
 			println!("Creating default config file at: {}", conf_path.display());
 			let default_config = ConfigFile::default();
 			let toml_content = Self::generate_toml_with_comments(&default_config);
-			fs::write(&conf_path, toml_content)?;
+			fs::write(&conf_path, toml_content).await?;
 		}
 		
 		// Load and parse TOML
-		let content = fs::read_to_string(&conf_path)?;
+		let content = fs::read_to_string(&conf_path).await?;
 		let config_file: ConfigFile = toml::from_str(&content)?;
 		
 		Ok(Config {

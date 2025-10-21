@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::config::Config;
+use colored::Colorize;
 use SC_Sub_Poster::{LogOn, ChatRoomClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -648,7 +649,53 @@ pub async fn main() -> Result<(), String> {
         return Err(format!("Failed to login: {}", e));
     }
     
-    println!("SteamBot logged in successfully. Keeping instance alive...");
+    println!("Checking for available Steam chat rooms...");
+    
+    // Check if chat IDs are configured
+    let config = CONFIG_CACHE.get().unwrap();
+    if config.chat_group_id == 0 || config.chat_id == 0 {
+        println!("⚠️ Chat group_id and/or chat_id not configured in config.toml");
+        println!("   Listing available Steam chat rooms...\n");
+        
+        // Get chat client to list rooms
+        let chat_client_guard = steam_bot.chat_client.lock().await;
+        if let Some(ref chat_client) = *chat_client_guard {
+            match chat_client.get_my_chat_rooms().await {
+                Ok(chat_rooms) => {
+                    println!("{} Found {} chat room(s):", "✓".green(), chat_rooms.len());
+                    for (i, room) in chat_rooms.iter().enumerate() {
+                        println!("  {}. {} (Group: {})", i + 1, room.chat_name.bold(), room.chat_group_name.bold());
+                        println!("     Group ID: {}, Chat ID: {}", room.chat_group_id.to_string().bold(), room.chat_id.to_string().bold());
+                    }
+                    println!("\nTo enable Call For Sub, update config.toml with:");
+                    println!("  [steam.chat]");
+                    println!("  group_id = <Group ID from above>");
+                    println!("  chat_id = <Chat ID from above>");
+                }
+                Err(e) => {
+                    println!("{} Failed to get chat rooms: {:?}", "✗".red(), e);
+                }
+            }
+        }
+        drop(chat_client_guard);
+        
+        println!("\nSteamBot running in chat-discovery mode (Call For Sub disabled)...");
+        
+        // Keep running but without periodic checks since we can't send messages anyway
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Shutdown signal received, stopping SteamBot...");
+                    break;
+                }
+            }
+        }
+        
+        println!("SteamBot shutdown complete");
+        return Ok(());
+    }
+    
+    println!("Keeping instance alive...");
     
     // Keep the SteamBot instance alive with periodic health checks
     let mut health_check_interval = tokio::time::interval(Duration::from_secs(900)); // Every 15 minutes

@@ -17,6 +17,10 @@ pub const CONF_FILE_NAME: &str = "config.toml";
 struct ConfigFile {
 	#[serde(default)]
 	steam: SteamConfig,
+	
+	/// Admin Steam IDs for frontend verification
+	#[serde(default)]
+	frontend_admins: Vec<i64>,
 }
 
 /// Steam-related configuration
@@ -62,6 +66,7 @@ impl Default for ConfigFile {
 	fn default() -> Self {
 		ConfigFile {
 			steam: SteamConfig::default(),
+			frontend_admins: Vec::new(),
 		}
 	}
 }
@@ -105,6 +110,7 @@ impl Default for ChatConfig {
 /// * `chat_id` - Steam chat ID for message sending
 /// * `steam_account` - Steam account username for bot login
 /// * `steam_password` - Steam account password for bot login
+/// * `frontend_admins` - List of Steam IDs with admin permissions
 #[derive(Debug)]
 pub struct Config {
 	pub steam_web_api_key: String,
@@ -112,6 +118,7 @@ pub struct Config {
 	pub chat_id: u64,
 	pub steam_account: String,
 	pub steam_password: String,
+	pub frontend_admins: Vec<i64>,
 }
 
 impl Config {
@@ -144,6 +151,7 @@ impl Config {
 			chat_id: config_file.steam.chat.chat_id,
 			steam_account: config_file.steam.bot.username,
 			steam_password: config_file.steam.bot.password,
+			frontend_admins: config_file.frontend_admins,
 		})
 	}
 	
@@ -168,7 +176,23 @@ password = ""
 [steam.chat]
 group_id = 0
 chat_id = 0
+
+# Frontend Admin Steam IDs (64-bit numeric format)
+# Users with these Steam IDs have admin permissions on the frontend
+frontend_admins = []
 "#.to_string()
+	}
+	
+	/// Check if a Steam ID has admin permissions
+	/// 
+	/// # Arguments
+	/// * `steam_id` - The Steam ID to check (64-bit format)
+	/// 
+	/// # Returns
+	/// * `true` if the Steam ID is in the admin list
+	/// * `false` otherwise
+	pub fn is_admin(&self, steam_id: i64) -> bool {
+		self.frontend_admins.contains(&steam_id)
 	}
 }
 

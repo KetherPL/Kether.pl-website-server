@@ -5,6 +5,7 @@ use rocket::{get, post, put, routes, serde::json::Json, State};
 use rocket::http::Status;
 use rocket::serde::{Deserialize, Serialize};
 use crate::json_storage::JsonDatabase;
+use crate::config::Config;
 
 // Data structures for JSON storage
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -102,6 +103,19 @@ pub struct DelBindVoting {
 pub struct DelBindVotingByUser {
     pub voter_steam_id: i64,
     pub voted_bind_id: i32,
+}
+
+// --- Frontend Admin verification structs ---
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(crate = "rocket::serde")]
+pub struct VerifyAdminRequest {
+    pub steam_id: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(crate = "rocket::serde")]
+pub struct VerifyAdminResponse {
+    pub is_admin: bool,
 }
 
 // --- Binds ---
@@ -572,6 +586,17 @@ pub async fn update_existing_command_by_id(
     })
 }
 
+// --- Admin verification ---
+
+#[post("/admin/verify", data = "<request>")]
+pub fn verify_admin(
+    config: &State<Config>,
+    request: Json<VerifyAdminRequest>,
+) -> Result<Json<VerifyAdminResponse>, Status> {
+    let is_admin = config.is_admin(request.steam_id);
+    Ok(Json(VerifyAdminResponse { is_admin }))
+}
+
 // --- Mount the routes ---
 pub fn mount_json_routes() -> Vec<rocket::Route> {
     routes![
@@ -614,6 +639,8 @@ pub fn mount_json_routes() -> Vec<rocket::Route> {
         options_update_existing_command,
         options_create_new_bind_voting,
         options_delete_existing_bind_voting,
+        // Admin verification
+        verify_admin,
     ]
 }
 

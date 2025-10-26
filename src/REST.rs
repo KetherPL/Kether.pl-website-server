@@ -84,7 +84,7 @@ pub fn rocket() -> Rocket<Build> {
 		.configure(rocket::Config::figment().merge(("port", 3001))) // NodeJS / React port
 		.attach(cors.clone());
 
-	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub"))]
+	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "rest_json_db"))]
 	{
 		let config = smol::block_on(Config::load()).expect("Failed to load configuration");
 		rocket_build = rocket_build.manage(config);

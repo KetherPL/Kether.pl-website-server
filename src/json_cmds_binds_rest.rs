@@ -597,6 +597,10 @@ pub fn verify_admin(
     Ok(Json(VerifyAdminResponse { is_admin }))
 }
 
+#[options("/admin/verify")]
+pub fn options_verify_admin() -> Status {
+    Status::Ok
+}
 // --- Mount the routes ---
 pub fn mount_json_routes() -> Vec<rocket::Route> {
     routes![
@@ -641,6 +645,7 @@ pub fn mount_json_routes() -> Vec<rocket::Route> {
         options_delete_existing_bind_voting,
         // Admin verification
         verify_admin,
+        options_verify_admin,
     ]
 }
 

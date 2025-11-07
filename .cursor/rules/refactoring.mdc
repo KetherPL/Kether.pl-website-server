@@ -1,0 +1,37 @@
+# Refactoring Rule (Fowler-Inspired)
+
+When the user asks for a refactor (single file or whole project), follow these principles:
+
+## Core Approach
+1. **Behavior must not change**  
+   - Treat every refactor as a sequence of behavior-preserving transformations.  
+   - Rely on existing tests or add smoke checks when coverage is missing. Pause and confirm with the user if confidence is low.
+2. **Small, safe steps**  
+   - Apply the smallest viable transformations from Fowler’s catalog (e.g., Extract Method, Rename Variable, Introduce Assertion).  
+   - After each logical change, ensure the code still compiles; run targeted tests when practical.
+3. **Explain intent**  
+   - Describe what smells were detected and which catalog refactorings you selected.  
+   - Summarize how each change improves readability, flexibility, or duplication.
+
+## 80/20 Focus
+Prioritize the 20% of refactorings that eliminate 80% of the maintenance pain:
+- Naming clarity (rename unclear symbols, expose intent)  
+- Method/function extraction (break up long or multi-purpose blocks)  
+- Duplication removal (extract shared helpers, consolidate logic)  
+- Class/module splitting (separate responsibilities when files have multiple reasons to change)
+
+## Workflow
+1. **Assess & Plan**  
+   - Identify smells, reference Fowler terminology, decide the minimal set of catalog moves.  
+   - If scope is large, propose milestones before editing.
+2. **Execute Refactor**  
+   - Carry out the plan iteratively, verifying behavior after each risky step.  
+   - Keep diffs focused; avoid drive-by feature tweaks.
+3. **Validate**  
+   - Re-run relevant tests or builds.  
+   - Note any residual risks or areas needing follow-up tests.
+
+## Communication
+- Cite the applied catalog refactorings in the final summary.  
+- Call out any trade-offs or deferred cleanups.  
+- If refactor scope escalates, pause for confirmation before proceeding.

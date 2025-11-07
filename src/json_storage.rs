@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::json_cmds_binds_rest::{Bind, BindSuggestion, Command};
+use crate::json_api::models::{Bind, BindSuggestion, Command};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};

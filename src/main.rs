@@ -32,6 +32,8 @@ mod SteamBot;
 #[cfg(feature = "rest_json_db")]
 mod json_cmds_binds_rest;
 #[cfg(feature = "rest_json_db")]
+mod json_api;
+#[cfg(feature = "rest_json_db")]
 mod json_storage;
 
 /// Command line arguments parser for the Kether Internal Services Server

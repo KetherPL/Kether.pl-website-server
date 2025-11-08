@@ -2,15 +2,85 @@
 
 use crate::config::Config;
 use colored::Colorize;
-use SC_Sub_Poster::{LogOn, ChatRoomClient};
+use SC_Sub_Poster::{ChatRoomClient, LogOn};
+use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use once_cell::sync::OnceCell;
 use tokio::time::{Duration, Instant};
 
-// Global SteamBot instance - thread-safe initialization
-static STEAM_BOT: OnceCell<Arc<SteamBot>> = OnceCell::new();
-static CONFIG_CACHE: OnceCell<Config> = OnceCell::new();
+const CONNECTION_ERROR_TOKENS: [&str; 6] = ["broken pipe", "connection", "network", "timeout", "closed", "io error"];
+const RECONNECT_RETRY_LIMIT: u32 = 3;
+const MAX_BACKOFF_SECONDS: u64 = 60;
+
+fn is_connection_error(message: &str) -> bool {
+    CONNECTION_ERROR_TOKENS.iter().any(|token| message.contains(token))
+}
+
+fn calculate_backoff_delay(attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1);
+    let seconds = std::cmp::min(1u64 << exponent, MAX_BACKOFF_SECONDS);
+    Duration::from_secs(seconds)
+}
+
+mod registry {
+    use super::*;
+    use once_cell::sync::OnceCell;
+    use std::sync::Arc;
+
+    static STEAM_BOT: OnceCell<Arc<SteamBot>> = OnceCell::new();
+    static CONFIG: OnceCell<Config> = OnceCell::new();
+
+    pub fn set_bot(bot: Arc<SteamBot>) {
+        STEAM_BOT.set(bot).expect("SteamBot already initialized");
+    }
+
+    pub fn bot() -> Option<&'static Arc<SteamBot>> {
+        STEAM_BOT.get()
+    }
+
+    pub fn set_config(config: Config) {
+        CONFIG.set(config).expect("Config already initialized");
+    }
+
+    pub fn set_config_if_absent(config: Config) {
+        let _ = CONFIG.set(config);
+    }
+
+    pub fn config() -> &'static Config {
+        CONFIG.get().expect("Config not initialized")
+    }
+}
+
+/// Represents an authenticated Steam session with both the low-level connection
+/// and the chat client. Keeping the two coupled avoids double-locking patterns
+/// in the SteamBot and ensures the chat client cannot outlive the connection.
+struct SteamSession {
+    _logon: LogOn,
+    chat: ChatRoomClient,
+}
+
+impl SteamSession {
+    /// Creates a new session from an authenticated `LogOn`.
+    fn new(logon: LogOn) -> Self {
+        let chat = ChatRoomClient::new(logon.connection().clone());
+        Self { _logon: logon, chat }
+    }
+
+    /// Provides access to the chat client.
+    fn chat(&self) -> &ChatRoomClient {
+        &self.chat
+    }
+
+}
+
+impl fmt::Debug for SteamSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SteamSession")
+            .field("logon", &"<LogOn>")
+            .field("chat", &"<ChatRoomClient>")
+            .finish()
+    }
+}
 
 /// Connection state for tracking Steam connection health
 #[derive(Debug, Clone, PartialEq)]
@@ -48,8 +118,7 @@ pub enum ConnectionState {
 /// }
 /// ```
 pub struct SteamBot {
-    steam_client: Arc<Mutex<Option<LogOn>>>,
-    chat_client: Arc<Mutex<Option<ChatRoomClient>>>,
+    session: Arc<Mutex<Option<SteamSession>>>,
     connection_state: Arc<Mutex<ConnectionState>>,
     last_health_check: Arc<Mutex<Option<Instant>>>,
     reconnect_attempts: Arc<Mutex<u32>>,
@@ -58,8 +127,7 @@ pub struct SteamBot {
 impl std::fmt::Debug for SteamBot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SteamBot")
-            .field("steam_client", &"<LogOn>")
-            .field("chat_client", &"<ChatRoomClient>")
+            .field("session", &"<SteamSession>")
             .finish()
     }
 }
@@ -67,8 +135,8 @@ impl std::fmt::Debug for SteamBot {
 impl SteamBot {
     /// Creates a new SteamBot instance
     /// 
-    /// Returns a new SteamBot with uninitialized steam_client and chat_client.
-    /// The clients will be initialized when `login()` is called.
+    /// Returns a new SteamBot with an uninitialized Steam session.
+    /// The session will be established when `login()` is called.
     /// 
     /// # Returns
     /// A new `SteamBot` instance ready for login
@@ -79,8 +147,7 @@ impl SteamBot {
     /// ```
     pub fn new() -> Self {
         Self {
-            steam_client: Arc::new(Mutex::new(None)),
-            chat_client: Arc::new(Mutex::new(None)),
+            session: Arc::new(Mutex::new(None)),
             connection_state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
             last_health_check: Arc::new(Mutex::new(None)),
             reconnect_attempts: Arc::new(Mutex::new(0)),
@@ -120,33 +187,21 @@ impl SteamBot {
         
         // Create and login the Steam client
         let steam_client = LogOn::new(&config.steam_account, &config.steam_password).await?;
-        
-        // Store the steam client in the mutex
+        let session = SteamSession::new(steam_client);
+
         {
-            let mut steam_client_guard = self.steam_client.lock().await;
-            *steam_client_guard = Some(steam_client);
+            let mut session_guard = self.session.lock().await;
+            *session_guard = Some(session);
         }
 
-        // Create chat client from the steam client
-        let steam_client_guard = self.steam_client.lock().await;
-        if let Some(ref steam_client) = *steam_client_guard {
-            let chat_client = ChatRoomClient::new(steam_client.connection().clone());
-            
-            // Store the chat client in the mutex
-            {
-                let mut chat_client_guard = self.chat_client.lock().await;
-                *chat_client_guard = Some(chat_client);
-            }
-            
-            // Update connection state to connected
-            {
-                let mut state_guard = self.connection_state.lock().await;
-                *state_guard = ConnectionState::Connected;
-            }
-            
-            // Log successful login
-            println!("SteamBot logged in successfully");
+        // Update connection state to connected
+        {
+            let mut state_guard = self.connection_state.lock().await;
+            *state_guard = ConnectionState::Connected;
         }
+
+        // Log successful login
+        println!("SteamBot logged in successfully");
 
         Ok(())
     }
@@ -173,15 +228,14 @@ impl SteamBot {
     /// steam_bot.send_message("!sub", &config).await?;
     /// ```
     pub async fn send_message(&self, message: &str, config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let steam_client_guard = self.steam_client.lock().await;
-        let chat_client_guard = self.chat_client.lock().await;
-        
-        if steam_client_guard.is_none() || chat_client_guard.is_none() {
+        let session_guard = self.session.lock().await;
+
+        if session_guard.is_none() {
             return Err("SteamBot not fully initialized. Please login first.".into());
         }
         
-        if let Some(ref chat_client) = *chat_client_guard {
-            chat_client.send_group_message(
+        if let Some(ref session) = *session_guard {
+            session.chat().send_group_message(
                 config.chat_group_id,
                 config.chat_id,
                 message,
@@ -220,17 +274,15 @@ impl SteamBot {
     /// This function uses OnceCell for thread-safe access to the global SteamBot instance.
     /// The instance must be initialized by calling `main()` first.
     pub async fn send_message_global(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(steam_bot) = STEAM_BOT.get() {
-            let config = CONFIG_CACHE.get().expect("Config not initialized - SteamBot::main() must be called first");
+        if let Some(steam_bot) = registry::bot() {
+            let config = registry::config();
             
             // Try to send message with immediate recovery on connection failures
             match steam_bot.send_message(message, config).await {
                 Ok(()) => Ok(()),
                 Err(e) => {
                     let error_str = e.to_string().to_lowercase();
-                    if error_str.contains("broken pipe") || error_str.contains("connection") || 
-                       error_str.contains("network") || error_str.contains("timeout") || 
-                       error_str.contains("closed") || error_str.contains("io error") {
+                    if is_connection_error(&error_str) {
                         println!("Message send failed due to connection issue: {}", e);
                         println!("Attempting immediate reconnection and retry...");
                         
@@ -274,8 +326,8 @@ impl SteamBot {
     /// This function uses OnceCell for thread-safe access to the global SteamBot instance.
     /// The instance must be initialized by calling `main()` first.
     pub async fn send_message_global_with_recovery(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(steam_bot) = STEAM_BOT.get() {
-            let config = CONFIG_CACHE.get().expect("Config not initialized - SteamBot::main() must be called first");
+        if let Some(steam_bot) = registry::bot() {
+            let config = registry::config();
             steam_bot.send_message_with_recovery(message, config).await
         } else {
             Err("SteamBot not initialized".into())
@@ -302,23 +354,20 @@ impl SteamBot {
     ///     steam_bot.reconnect(&config).await?;
     /// }
     /// ```
-    pub async fn check_connection_health(&self, config: &Config) -> Result<bool, Box<dyn std::error::Error>> {
-        let steam_client_guard = self.steam_client.lock().await;
-        let chat_client_guard = self.chat_client.lock().await;
+    pub async fn check_connection_health(&self, _config: &Config) -> Result<bool, Box<dyn std::error::Error>> {
+        let session_guard = self.session.lock().await;
         
-        // Check if both clients are initialized
-        if steam_client_guard.is_none() || chat_client_guard.is_none() {
+        // Check if a session is initialized
+        if session_guard.is_none() {
             return Ok(false);
         }
         
-        // Perform a lightweight health check without sending messages
-        // We'll use a timeout-based approach to detect dead connections
-        if let Some(ref chat_client) = *chat_client_guard {
+        if let Some(ref session) = *session_guard {
             // Try to send a message to an invalid group ID (this won't actually send anything)
             // but will fail quickly if the connection is dead
             match tokio::time::timeout(
                 Duration::from_secs(5), // 5 second timeout
-                chat_client.send_group_message(
+                session.chat().send_group_message(
                     0, // Invalid group ID - won't actually send
                     0, // Invalid chat ID - won't actually send  
                     "health_check", // Test message that won't be sent
@@ -332,9 +381,7 @@ impl SteamBot {
                 Ok(Err(e)) => {
                     // Check if the error indicates connection issues
                     let error_str = e.to_string().to_lowercase();
-                    if error_str.contains("broken pipe") || error_str.contains("connection") || 
-                       error_str.contains("network") || error_str.contains("timeout") || 
-                       error_str.contains("closed") || error_str.contains("io error") {
+                    if is_connection_error(&error_str) {
                         println!("Connection health check failed: {}", e);
                         Ok(false)
                     } else {
@@ -388,15 +435,12 @@ impl SteamBot {
         println!("Attempting to reconnect to Steam (attempt {})", attempts);
         
         // Calculate backoff delay (exponential backoff with max of 60 seconds)
-        let backoff_delay = std::cmp::min(2u64.pow(attempts.saturating_sub(1)), 60);
-        tokio::time::sleep(Duration::from_secs(backoff_delay)).await;
+        tokio::time::sleep(calculate_backoff_delay(attempts)).await;
         
         // Clear existing connections
         {
-            let mut steam_guard = self.steam_client.lock().await;
-            let mut chat_guard = self.chat_client.lock().await;
-            *steam_guard = None;
-            *chat_guard = None;
+            let mut session_guard = self.session.lock().await;
+            *session_guard = None;
         }
         
         // Attempt to login again
@@ -468,18 +512,17 @@ impl SteamBot {
             if !is_healthy {
                 println!("Steam connection unhealthy, attempting reconnection...");
                 // Attempt reconnection with retry logic
-                let max_retries = 3;
-                for attempt in 1..=max_retries {
+                for attempt in 1..=RECONNECT_RETRY_LIMIT {
                     match self.reconnect(config).await {
                         Ok(()) => {
                             println!("Successfully reconnected to Steam");
                             return Ok(());
                         }
                         Err(e) => {
-                            if attempt == max_retries {
+                            if attempt == RECONNECT_RETRY_LIMIT {
                                 return Err(Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::Other, 
-                                    format!("Failed to reconnect after {} attempts: {}", max_retries, e)
+                                    std::io::ErrorKind::Other,
+                                    format!("Failed to reconnect after {} attempts: {}", RECONNECT_RETRY_LIMIT, e)
                                 )));
                             }
                             println!("Reconnection attempt {} failed, retrying... (Error: {})", attempt, e);
@@ -513,17 +556,17 @@ impl SteamBot {
     /// steam_bot.send_message_with_recovery("!sub", &config).await?;
     /// ```
     pub async fn send_message_with_recovery(&self, message: &str, config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        const SEND_RETRY_LIMIT: u32 = 3;
         // Ensure connection is healthy
         self.ensure_connection(config).await.map_err(|e| format!("Connection check failed: {}", e))?;
         
         // Send message with retry logic
-        let max_retries = 3;
-        for attempt in 1..=max_retries {
+        for attempt in 1..=SEND_RETRY_LIMIT {
             match self.send_message(message, config).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
-                    if attempt == max_retries {
-                        return Err(format!("Failed to send message after {} attempts: {}", max_retries, e).into());
+                    if attempt == SEND_RETRY_LIMIT {
+                        return Err(format!("Failed to send message after {} attempts: {}", SEND_RETRY_LIMIT, e).into());
                     }
                     println!("Message send attempt {} failed, retrying...", attempt);
                     
@@ -583,6 +626,149 @@ impl Default for SteamBot {
     }
 }
 
+/// Coordinates the lifecycle of the SteamBot by handling configuration loading,
+/// credential validation, and runtime mode selection.
+struct SteamBotService {
+    bot: Arc<SteamBot>,
+    config: Config,
+}
+
+impl SteamBotService {
+    /// Loads configuration and prepares a SteamBot instance.
+    async fn new() -> Result<Self, String> {
+        let config = crate::config::Config::load()
+            .await
+            .map_err(|e| format!("Failed to load config: {}", e))?;
+
+        Ok(Self {
+            bot: Arc::new(SteamBot::new()),
+            config,
+        })
+    }
+
+    /// Entry point for running the service. Chooses between disabled and enabled
+    /// modes depending on whether credentials are present.
+    async fn run(self) -> Result<(), String> {
+        if self.config.steam_account.is_empty() || self.config.steam_password.is_empty() {
+            self.run_disabled_mode().await
+        } else {
+            self.run_enabled_mode().await
+        }
+    }
+
+    async fn run_disabled_mode(self) -> Result<(), String> {
+        let Self { config, .. } = self;
+
+        println!("⚠️ No Steam account username and/or password is provided in the config. Call For Sub won't be available.");
+        println!("   To enable Call For Sub functionality, set `steam.bot.username` and `steam.bot.password` in `config.toml`");
+
+        registry::set_config_if_absent(config);
+
+        println!("SteamBot running in disabled mode...");
+        Self::wait_for_shutdown_loop(false).await
+    }
+
+    async fn run_enabled_mode(self) -> Result<(), String> {
+        let Self { bot, config } = self;
+
+        registry::set_bot(bot.clone());
+        registry::set_config(config);
+
+        println!("Logging in to Steam...");
+        let config_ref = registry::config();
+        if let Err(e) = bot.login(config_ref).await {
+            return Err(format!("Failed to login: {}", e));
+        }
+
+        Self::handle_post_login(bot).await
+    }
+
+    async fn handle_post_login(bot: Arc<SteamBot>) -> Result<(), String> {
+        println!("Checking for available Steam chat rooms...");
+
+        let config = registry::config();
+        if config.chat_group_id == 0 || config.chat_id == 0 {
+            Self::run_chat_discovery_mode(bot).await
+        } else {
+            Self::run_active_mode(bot).await
+        }
+    }
+
+    async fn run_chat_discovery_mode(bot: Arc<SteamBot>) -> Result<(), String> {
+        println!("⚠️ Chat group_id and/or chat_id not configured in config.toml");
+        println!("   Listing available Steam chat rooms...\n");
+
+        let session_guard = bot.session.lock().await;
+        if let Some(ref session) = *session_guard {
+            match session.chat().get_my_chat_rooms().await {
+                Ok(chat_rooms) => {
+                    println!("{} Found {} chat room(s):", "✓".green(), chat_rooms.len());
+                    for (i, room) in chat_rooms.iter().enumerate() {
+                        println!("  {}. {} (Group: {})", i + 1, room.chat_name.bold(), room.chat_group_name.bold());
+                        println!("     Group ID: {}, Chat ID: {}", room.chat_group_id.to_string().bold(), room.chat_id.to_string().bold());
+                    }
+                    println!("\nTo enable Call For Sub, update config.toml with:");
+                    println!("  [steam.chat]");
+                    println!("  group_id = <Group ID from above>");
+                    println!("  chat_id = <Chat ID from above>");
+                }
+                Err(e) => {
+                    println!("{} Failed to get chat rooms: {:?}", "✗".red(), e);
+                }
+            }
+        }
+        drop(session_guard);
+
+        println!("\nSteamBot running in chat-discovery mode (Call For Sub disabled)...");
+        Self::wait_for_shutdown_loop(true).await
+    }
+
+    async fn run_active_mode(bot: Arc<SteamBot>) -> Result<(), String> {
+        println!("Keeping instance alive...");
+
+        let mut health_check_interval = tokio::time::interval(Duration::from_secs(900)); // Every 15 minutes
+
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Shutdown signal received, stopping SteamBot...");
+                    break;
+                }
+                _ = health_check_interval.tick() => {
+                    let config = registry::config();
+                    println!("Performing periodic Steam connection health check...");
+                    if let Err(e) = bot.ensure_connection(config).await {
+                        eprintln!("Periodic health check failed: {}", e);
+                    } else {
+                        let state = bot.get_connection_state().await;
+                        let attempts = bot.get_reconnect_attempts().await;
+                        println!("SteamBot health check completed: state={:?}, reconnect_attempts={}", state, attempts);
+                    }
+                }
+            }
+        }
+
+        println!("SteamBot shutdown complete");
+        Ok(())
+    }
+
+    async fn wait_for_shutdown_loop(print_completion: bool) -> Result<(), String> {
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Shutdown signal received, stopping SteamBot...");
+                    break;
+                }
+            }
+        }
+
+        if print_completion {
+            println!("SteamBot shutdown complete");
+        }
+        Ok(())
+    }
+}
+
 /// Main entry point for the SteamBot service
 /// 
 /// This function initializes the SteamBot, logs into Steam, and keeps the
@@ -609,121 +795,7 @@ impl Default for SteamBot {
 /// }
 /// ```
 pub async fn main() -> Result<(), String> {
-    // Load configuration
-    let config = match crate::config::Config::load().await {
-        Ok(config) => config,
-        Err(e) => return Err(format!("Failed to load config: {}", e)),
-    };
-    
-    // Check if Steam credentials are configured
-    if config.steam_account.is_empty() || config.steam_password.is_empty() {
-        println!("⚠️ No Steam account username and/or password is provided in the config. Call For Sub won't be available.");
-        println!("   To enable Call For Sub functionality, set `steam.bot.username` and `steam.bot.password` in `config.toml`");
-        
-        // Initialize global config cache even though we're not logging in
-        CONFIG_CACHE.set(config).ok();
-        
-        // Keep running but don't attempt to login
-        println!("SteamBot running in disabled mode...");
-        loop {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
-                    println!("Shutdown signal received, stopping SteamBot...");
-                    break;
-                }
-            }
-        }
-        return Ok(());
-    }
-    
-    // Create SteamBot instance
-    let steam_bot = Arc::new(SteamBot::new());
-    
-    // Initialize global instance
-    STEAM_BOT.set(steam_bot.clone()).unwrap();
-    CONFIG_CACHE.set(config).unwrap();
-    
-    // Login to Steam
-    println!("Logging in to Steam...");
-    if let Err(e) = steam_bot.login(&CONFIG_CACHE.get().unwrap()).await {
-        return Err(format!("Failed to login: {}", e));
-    }
-    
-    println!("Checking for available Steam chat rooms...");
-    
-    // Check if chat IDs are configured
-    let config = CONFIG_CACHE.get().unwrap();
-    if config.chat_group_id == 0 || config.chat_id == 0 {
-        println!("⚠️ Chat group_id and/or chat_id not configured in config.toml");
-        println!("   Listing available Steam chat rooms...\n");
-        
-        // Get chat client to list rooms
-        let chat_client_guard = steam_bot.chat_client.lock().await;
-        if let Some(ref chat_client) = *chat_client_guard {
-            match chat_client.get_my_chat_rooms().await {
-                Ok(chat_rooms) => {
-                    println!("{} Found {} chat room(s):", "✓".green(), chat_rooms.len());
-                    for (i, room) in chat_rooms.iter().enumerate() {
-                        println!("  {}. {} (Group: {})", i + 1, room.chat_name.bold(), room.chat_group_name.bold());
-                        println!("     Group ID: {}, Chat ID: {}", room.chat_group_id.to_string().bold(), room.chat_id.to_string().bold());
-                    }
-                    println!("\nTo enable Call For Sub, update config.toml with:");
-                    println!("  [steam.chat]");
-                    println!("  group_id = <Group ID from above>");
-                    println!("  chat_id = <Chat ID from above>");
-                }
-                Err(e) => {
-                    println!("{} Failed to get chat rooms: {:?}", "✗".red(), e);
-                }
-            }
-        }
-        drop(chat_client_guard);
-        
-        println!("\nSteamBot running in chat-discovery mode (Call For Sub disabled)...");
-        
-        // Keep running but without periodic checks since we can't send messages anyway
-        loop {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
-                    println!("Shutdown signal received, stopping SteamBot...");
-                    break;
-                }
-            }
-        }
-        
-        println!("SteamBot shutdown complete");
-        return Ok(());
-    }
-    
-    println!("Keeping instance alive...");
-    
-    // Keep the SteamBot instance alive with periodic health checks
-    let mut health_check_interval = tokio::time::interval(Duration::from_secs(900)); // Every 15 minutes
-    
-    loop {
-        tokio::select! {
-            // Handle shutdown signal
-            _ = tokio::signal::ctrl_c() => {
-                println!("Shutdown signal received, stopping SteamBot...");
-                break;
-            }
-            // Periodic health check
-            _ = health_check_interval.tick() => {
-                let config = CONFIG_CACHE.get().unwrap();
-                println!("Performing periodic Steam connection health check...");
-                if let Err(e) = steam_bot.ensure_connection(config).await {
-                    eprintln!("Periodic health check failed: {}", e);
-                } else {
-                    let state = steam_bot.get_connection_state().await;
-                    let attempts = steam_bot.get_reconnect_attempts().await;
-                    println!("SteamBot health check completed: state={:?}, reconnect_attempts={}", state, attempts);
-                }
-            }
-        }
-    }
-    
-    println!("SteamBot shutdown complete");
-    Ok(())
+    SteamBotService::new().await?.run().await
 }
 
 /// Test module for SteamBot functionality

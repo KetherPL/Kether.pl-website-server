@@ -36,6 +36,8 @@ mod json_api;
 #[cfg(feature = "rest_json_db")]
 mod json_storage;
 
+mod repl;
+
 /// Command line arguments parser for the Kether Internal Services Server
 /// 
 /// This struct defines the available command line options and subcommands
@@ -148,6 +150,12 @@ async fn main() {
 		spawn(async {
 			if let Err(e) = SteamBot::main().await {
 				eprintln!("SteamBot error: {}", e);
+			}
+		});
+		// Start the REPL key listener (activates on 'C' key press)
+		spawn(async {
+			if let Err(e) = repl::start_key_listener().await {
+				eprintln!("REPL key listener error: {}", e);
 			}
 		});
 		// Keep the main thread alive so the server thread can run

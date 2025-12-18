@@ -303,37 +303,6 @@ impl SteamBot {
         }
     }
 
-    /// Sends a message using the global SteamBot instance with recovery
-    /// 
-    /// This static method sends a message using the global SteamBot instance
-    /// with automatic connection recovery. If the connection is lost, it will
-    /// attempt to reconnect before sending the message.
-    /// 
-    /// # Arguments
-    /// * `message` - The message to send to the Steam group chat
-    /// 
-    /// # Returns
-    /// * `Ok(())` - If message is sent successfully
-    /// * `Err(Box<dyn std::error::Error>)` - If sending fails after recovery attempts
-    /// 
-    /// # Example
-    /// ```rust
-    /// // From anywhere in the application with recovery
-    /// SteamBot::send_message_global_with_recovery("!sub").await?;
-    /// ```
-    /// 
-    /// # Thread Safety
-    /// This function uses OnceCell for thread-safe access to the global SteamBot instance.
-    /// The instance must be initialized by calling `main()` first.
-    pub async fn send_message_global_with_recovery(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(steam_bot) = registry::bot() {
-            let config = registry::config();
-            steam_bot.send_message_with_recovery(message, config).await
-        } else {
-            Err("SteamBot not initialized".into())
-        }
-    }
-
     /// Checks the health of the Steam connection
     /// 
     /// This function performs a health check on the Steam connection to determine
@@ -535,50 +504,6 @@ impl SteamBot {
         }
         
         Ok(())
-    }
-
-    /// Sends a message with automatic connection recovery
-    /// 
-    /// This function sends a message to the Steam group chat with automatic
-    /// connection recovery. If the connection is lost, it will attempt to
-    /// reconnect before sending the message.
-    /// 
-    /// # Arguments
-    /// * `message` - The message to send to the Steam group chat
-    /// * `config` - A reference to the Config struct containing chat IDs
-    /// 
-    /// # Returns
-    /// * `Ok(())` - If message is sent successfully
-    /// * `Err(Box<dyn std::error::Error>)` - If sending fails after recovery attempts
-    /// 
-    /// # Example
-    /// ```rust
-    /// steam_bot.send_message_with_recovery("!sub", &config).await?;
-    /// ```
-    pub async fn send_message_with_recovery(&self, message: &str, config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        const SEND_RETRY_LIMIT: u32 = 3;
-        // Ensure connection is healthy
-        self.ensure_connection(config).await.map_err(|e| format!("Connection check failed: {}", e))?;
-        
-        // Send message with retry logic
-        for attempt in 1..=SEND_RETRY_LIMIT {
-            match self.send_message(message, config).await {
-                Ok(()) => return Ok(()),
-                Err(e) => {
-                    if attempt == SEND_RETRY_LIMIT {
-                        return Err(format!("Failed to send message after {} attempts: {}", SEND_RETRY_LIMIT, e).into());
-                    }
-                    println!("Message send attempt {} failed, retrying...", attempt);
-                    
-                    // Try to reconnect before next attempt
-                    if let Err(reconnect_err) = self.reconnect(config).await {
-                        println!("Failed to reconnect during retry: {}", reconnect_err);
-                    }
-                }
-            }
-        }
-        
-        Err("Failed to send message after all retry attempts".into())
     }
 
     /// Gets the current connection state

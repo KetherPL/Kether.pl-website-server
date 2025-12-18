@@ -2,7 +2,7 @@
 
 use crate::config::Config;
 use colored::Colorize;
-use SC_Sub_Poster::{ChatRoomClient, LogOn};
+use SC_Sub_Poster::{ChatRoomClient, LogOn, SendGroupMessageParams};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -235,12 +235,12 @@ impl SteamBot {
         }
         
         if let Some(ref session) = *session_guard {
-            session.chat().send_group_message(
+            let params = SendGroupMessageParams::new(
                 config.chat_group_id,
                 config.chat_id,
                 message,
-                false,
-            ).await.map_err(|e| format!("Failed to send message: {}", e))?;
+            );
+            session.chat().send_group_message(params).await.map_err(|e| format!("Failed to send message: {}", e))?;
             
             println!("Message sent to Steam chat: {}", message);
         } else {
@@ -365,14 +365,14 @@ impl SteamBot {
         if let Some(ref session) = *session_guard {
             // Try to send a message to an invalid group ID (this won't actually send anything)
             // but will fail quickly if the connection is dead
+            let params = SendGroupMessageParams::new(
+                0, // Invalid group ID - won't actually send
+                0, // Invalid chat ID - won't actually send  
+                "health_check", // Test message that won't be sent
+            );
             match tokio::time::timeout(
                 Duration::from_secs(5), // 5 second timeout
-                session.chat().send_group_message(
-                    0, // Invalid group ID - won't actually send
-                    0, // Invalid chat ID - won't actually send  
-                    "health_check", // Test message that won't be sent
-                    false,
-                )
+                session.chat().send_group_message(params)
             ).await {
                 Ok(Ok(_)) => {
                     // This shouldn't happen with invalid IDs, but if it does, connection is alive

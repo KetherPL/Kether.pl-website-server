@@ -6,6 +6,10 @@ use crate::steam_bot::messaging::MessageSender;
 use SC_Sub_Poster::EnhancedGroupChatMessage;
 use std::error::Error;
 use std::sync::Arc;
+use tokio::time::Duration;
+
+/// Retry delay when the listener encounters an error
+const LISTENER_RETRY_DELAY_SECS: u64 = 5;
 
 /// Starts the message listener task that listens for incoming Steam chat messages
 /// and processes commands when the bot is mentioned.
@@ -26,100 +30,91 @@ pub fn start_message_listener(bot: Arc<SteamBot>) -> tokio::task::JoinHandle<()>
 
 /// Main message listener loop
 async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // Get bot Steam ID
-    let bot_steam_id_u64 = match bot.get_bot_steam_id().await {
-        Some(id) => id,
-        None => {
-            eprintln!("Warning: Bot Steam ID not available, message listener cannot detect mentions");
-            return Ok(());
-        }
-    };
-
+    let bot_steam_id = get_bot_steam_id(&bot).await?;
     println!("Message listener started, waiting for messages...");
 
-    // Listen for group messages - get chat client inside the closure
     loop {
-        let bot_for_loop = bot.clone();
-        let bot_steam_id_u64_clone = bot_steam_id_u64;
-        
-        // Get connection to clone chat client, then drop lock before awaiting
-        let should_continue = {
-            // Get connection to create a new ChatRoomClient - lock is dropped before await
-            let connection_opt = {
-                let session_guard = bot_for_loop.session.lock().await;
-                match session_guard.as_ref() {
-                    Some(session) => {
-                        // Clone the connection to create a new ChatRoomClient
-                        Some(session.chat().connection().clone())
+        match create_chat_client(&bot).await {
+            Some(chat_client) => {
+                match listen_for_messages(chat_client, bot_steam_id).await {
+                    Ok(()) => {
+                        eprintln!("Message listener completed unexpectedly");
+                        break;
                     }
-                    None => None,
-                }
-            }; // Lock is dropped here - important!
-            
-            match connection_opt {
-                Some(connection) => {
-                    // Create a new ChatRoomClient from the cloned connection
-                    // This allows us to use it without holding the session lock
-                    use SC_Sub_Poster::ChatRoomClient;
-                    let chat_client = ChatRoomClient::new(connection);
-                    
-                    // Listen for group messages - lock is already dropped, so no deadlock
-                    match chat_client.listen_for_group_messages(move |message: EnhancedGroupChatMessage| {
-                        let bot_steam_id_u64 = bot_steam_id_u64_clone;
-
-                        // Process the message
-                        if let Some(response) = process_message(&message, bot_steam_id_u64) {
-                            // Send response asynchronously to the same chat room using the global bot instance
-                            let chat_group_id = message.chat_group_id;
-                            let chat_id = message.chat_id;
-                            let response_clone = response.clone();
-                            
-                            // Use Handle::current() to ensure we can spawn in the callback context
-                            let handle = tokio::runtime::Handle::try_current();
-                            match handle {
-                                Ok(handle) => {
-                                    handle.spawn(async move {
-                                        if let Err(e) = MessageSender::send_to_chat_global(&response_clone, chat_group_id, chat_id).await {
-                                            eprintln!("Failed to send command response: {}", e);
-                                        }
-                                    });
-                                }
-                                Err(e) => {
-                                    eprintln!("Failed to get runtime handle: {}", e);
-                                    eprintln!("Cannot spawn task to send response");
-                                }
-                            }
-                        }
-                    }).await {
-                        Ok(()) => {
-                            // Listener completed normally (shouldn't happen, but handle it)
-                            eprintln!("Message listener completed unexpectedly");
-                            false
-                        }
-                        Err(e) => {
-                            // Convert error to string immediately
-                            let error_msg = format!("{}", e);
-                            eprintln!("Message listener error: {}, retrying...", error_msg);
-                            true // Continue loop
-                        }
+                    Err(e) => {
+                        // Convert error to string immediately to ensure Send
+                        let error_msg = format!("{}", e);
+                        eprintln!("Message listener error: {}, retrying...", error_msg);
+                        wait_before_retry().await;
                     }
-                }
-                None => {
-                    eprintln!("Warning: Steam session not available, message listener cannot start");
-                    return Ok(());
                 }
             }
-        };
-        
-        if !should_continue {
-            break;
+            None => {
+                eprintln!("Warning: Steam session not available, message listener cannot start");
+                return Ok(());
+            }
         }
-        
-        // Wait a bit before retrying
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     }
 
     Ok(())
+}
+
+/// Gets the bot's Steam ID, returning an error if unavailable
+async fn get_bot_steam_id(bot: &Arc<SteamBot>) -> Result<u64, Box<dyn Error + Send + Sync>> {
+    bot.get_bot_steam_id()
+        .await
+        .ok_or_else(|| "Bot Steam ID not available, message listener cannot detect mentions".into())
+}
+
+/// Creates a new ChatRoomClient from the bot's session connection
+/// 
+/// Returns None if the session is not available. The connection is cloned
+/// so the lock can be dropped before awaiting the listener.
+async fn create_chat_client(bot: &Arc<SteamBot>) -> Option<SC_Sub_Poster::ChatRoomClient> {
+    let connection = {
+        let session_guard = bot.session.lock().await;
+        session_guard.as_ref()?.chat().connection().clone()
+    }; // Lock is dropped here - important to avoid deadlock
+    
+    Some(SC_Sub_Poster::ChatRoomClient::new(connection))
+}
+
+/// Listens for incoming messages and processes commands
+async fn listen_for_messages(
+    chat_client: SC_Sub_Poster::ChatRoomClient,
+    bot_steam_id: u64,
+) -> Result<(), String> {
+    chat_client.listen_for_group_messages(move |message: EnhancedGroupChatMessage| {
+        if let Some(response) = process_message(&message, bot_steam_id) {
+            send_command_response(&message, &response);
+        }
+    }).await.map_err(|e| format!("{}", e))
+}
+
+/// Sends a command response to the same chat room as the incoming message
+fn send_command_response(message: &EnhancedGroupChatMessage, response: &str) {
+    let chat_group_id = message.chat_group_id;
+    let chat_id = message.chat_id;
+    let response = response.to_string();
+    
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move {
+                if let Err(e) = MessageSender::send_to_chat_global(&response, chat_group_id, chat_id).await {
+                    eprintln!("Failed to send command response: {}", e);
+                }
+            });
+        }
+        Err(e) => {
+            eprintln!("Failed to get runtime handle: {}", e);
+            eprintln!("Cannot spawn task to send response");
+        }
+    }
+}
+
+/// Waits before retrying the listener after an error
+async fn wait_before_retry() {
+    tokio::time::sleep(Duration::from_secs(LISTENER_RETRY_DELAY_SECS)).await;
 }
 
 /// Processes an incoming message to check if the bot is mentioned and extract commands

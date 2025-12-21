@@ -116,6 +116,9 @@ impl SteamBotService {
     async fn run_active_mode(bot: Arc<SteamBot>) -> Result<(), String> {
         println!("Keeping instance alive...");
 
+        // Start message listener
+        let _listener_handle = crate::steam_bot::listener::start_message_listener(bot.clone());
+
         let mut health_check_interval = tokio::time::interval(Duration::from_secs(900)); // Every 15 minutes
 
         loop {

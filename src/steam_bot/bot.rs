@@ -60,11 +60,14 @@ impl fmt::Debug for SteamSession {
 ///     Ok(())
 /// }
 /// ```
+// Store bot Steam ID as a u64 to avoid direct dependency on steamid_ng2
+// We can convert it back when needed using SteamID::from(u64)
 pub struct SteamBot {
     pub(crate) session: Arc<Mutex<Option<SteamSession>>>,
     pub(crate) connection_state: Arc<Mutex<ConnectionState>>,
     pub(crate) last_health_check: Arc<Mutex<Option<Instant>>>,
     pub(crate) reconnect_attempts: Arc<Mutex<u32>>,
+    pub(crate) bot_steam_id: Arc<Mutex<Option<u64>>>,
 }
 
 impl std::fmt::Debug for SteamBot {
@@ -94,6 +97,7 @@ impl SteamBot {
             connection_state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
             last_health_check: Arc::new(Mutex::new(None)),
             reconnect_attempts: Arc::new(Mutex::new(0)),
+            bot_steam_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -118,11 +122,14 @@ impl SteamBot {
     /// * `config` - A reference to the Config struct containing Steam credentials
     /// 
     /// # Returns
-    /// * `Ok(SteamSession)` - If session creation is successful
+    /// * `Ok((SteamSession, u64))` - If session creation is successful, returns session and bot Steam ID as u64
     /// * `Err(Box<dyn std::error::Error>)` - If session creation fails
-    async fn create_steam_session(config: &Config) -> Result<SteamSession, Box<dyn std::error::Error>> {
+    async fn create_steam_session(config: &Config) -> Result<(SteamSession, u64), Box<dyn std::error::Error>> {
         let steam_client = LogOn::new(&config.steam_account, &config.steam_password).await?;
-        Ok(SteamSession::new(steam_client))
+        let bot_steam_id = steam_client.steam_id();
+        // Convert SteamID to u64 for storage
+        let bot_steam_id_u64: u64 = bot_steam_id.into();
+        Ok((SteamSession::new(steam_client), bot_steam_id_u64))
     }
 
     /// Updates connection state after successful login
@@ -164,11 +171,17 @@ impl SteamBot {
         }
         
         // Create and login the Steam client
-        let session = Self::create_steam_session(config).await?;
+        let (session, bot_steam_id) = Self::create_steam_session(config).await?;
 
         {
             let mut session_guard = self.session.lock().await;
             *session_guard = Some(session);
+        }
+
+        // Store the bot's Steam ID
+        {
+            let mut steam_id_guard = self.bot_steam_id.lock().await;
+            *steam_id_guard = Some(bot_steam_id);
         }
 
         // Update connection state to connected
@@ -212,6 +225,25 @@ impl SteamBot {
     pub async fn get_reconnect_attempts(&self) -> u32 {
         let attempts_guard = self.reconnect_attempts.lock().await;
         *attempts_guard
+    }
+
+    /// Gets the bot's Steam ID
+    /// 
+    /// This function returns the Steam ID of the logged-in bot account as a u64.
+    /// 
+    /// # Returns
+    /// * `Some(u64)` - The bot's Steam ID if logged in
+    /// * `None` - If not logged in yet
+    /// 
+    /// # Example
+    /// ```rust
+    /// if let Some(steam_id) = steam_bot.get_bot_steam_id().await {
+    ///     println!("Bot Steam ID: {}", steam_id);
+    /// }
+    /// ```
+    pub async fn get_bot_steam_id(&self) -> Option<u64> {
+        let steam_id_guard = self.bot_steam_id.lock().await;
+        *steam_id_guard
     }
 }
 

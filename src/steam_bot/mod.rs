@@ -34,7 +34,9 @@
 //! ```
 
 mod bot;
+mod commands;
 mod connection;
+mod listener;
 mod messaging;
 mod registry;
 mod service;

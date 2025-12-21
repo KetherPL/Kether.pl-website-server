@@ -173,14 +173,21 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
         // Spawn async task to handle the command and send response
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
+                let command_lower = command.to_lowercase();
+                let needs_placeholder = command_lower == "status" || command_lower == "s";
+                
                 handle.spawn(async move {
-                    // Send placeholder message and capture its PreprocessedMessage
-                    let placeholder_preprocessed = match MessageSender::send_to_chat_global_with_preprocessed("Querying server...", chat_group_id, chat_id).await {
-                        Ok(preprocessed) => Some(preprocessed),
-                        Err(e) => {
-                            eprintln!("Failed to send placeholder message: {}", e);
-                            None
+                    // Send placeholder message only for commands that need it (like !status)
+                    let placeholder_preprocessed = if needs_placeholder {
+                        match MessageSender::send_to_chat_global_with_preprocessed("Querying server...", chat_group_id, chat_id).await {
+                            Ok(preprocessed) => Some(preprocessed),
+                            Err(e) => {
+                                eprintln!("Failed to send placeholder message: {}", e);
+                                None
+                            }
                         }
+                    } else {
+                        None
                     };
                     
                     // Execute the async command
@@ -200,7 +207,7 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
                         }
                     }
                 });
-                // Return None since the async task handles sending the placeholder
+                // Return None since the async task handles sending the response
                 return None;
             }
             Err(e) => {

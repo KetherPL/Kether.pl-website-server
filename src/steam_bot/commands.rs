@@ -86,9 +86,13 @@ impl CommandRegistry {
         
         // Register the status command (only if server_query feature is enabled)
         #[cfg(feature = "server_query")]
-        registry.register("status", Box::new(StatusCommand));
-        #[cfg(feature = "server_query")]
         registry.register("s", Box::new(StatusCommand));
+        #[cfg(feature = "server_query")]
+        registry.register("status", Box::new(StatusCommand));
+        
+        // Register the help command
+        registry.register("h", Box::new(HelpCommand));
+        registry.register("help", Box::new(HelpCommand));
         
         registry
     }
@@ -146,6 +150,20 @@ impl CommandRegistry {
         } else {
             None
         }
+    }
+    
+    /// Gets a list of all registered command names (excluding test command)
+    /// 
+    /// # Returns
+    /// A vector of command names, sorted alphabetically
+    pub fn get_command_names(&self) -> Vec<String> {
+        let mut commands: Vec<String> = self.handlers
+            .keys()
+            .filter(|name| name != &"test") // Exclude test command
+            .cloned()
+            .collect();
+        commands.sort();
+        commands
     }
 }
 
@@ -234,6 +252,51 @@ impl CommandHandler for StatusCommand {
                 Err(_) => {
                     "Server Status: Offline or unavailable".to_string()
                 }
+            }
+        })
+    }
+}
+
+/// Help command handler
+/// 
+/// Lists all available commands (excluding test command).
+struct HelpCommand;
+
+impl CommandHandler for HelpCommand {
+    fn execute(&self, _args: &str, _message: &EnhancedGroupChatMessage) -> String {
+        let registry = CommandRegistry::new();
+        let commands = registry.get_command_names();
+        
+        if commands.is_empty() {
+            "No commands available.".to_string()
+        } else {
+            let mut response = "Available commands:\n".to_string();
+            for cmd in commands {
+                response.push_str(&format!("  • !{}\n", cmd));
+            }
+            response.pop(); // Remove trailing newline
+            response
+        }
+    }
+    
+    fn execute_async_owned(
+        &self,
+        _args: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
+        // Help command is synchronous, so we just return the result immediately
+        Box::pin(async move {
+            let registry = CommandRegistry::new();
+            let commands = registry.get_command_names();
+            
+            if commands.is_empty() {
+                "No commands available.".to_string()
+            } else {
+                let mut response = "Available commands:\n".to_string();
+                for cmd in commands {
+                    response.push_str(&format!("  • !{}\n", cmd));
+                }
+                response.pop(); // Remove trailing newline
+                response
             }
         })
     }

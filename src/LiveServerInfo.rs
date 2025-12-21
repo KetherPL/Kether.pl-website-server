@@ -22,7 +22,7 @@ pub struct L4D2ServerInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
-struct PD { // from gamedig::protocols::valve::game::Player
+pub struct PD { // from gamedig::protocols::valve::game::Player
 	pub name: String,
 	pub score: i32,
 	pub duration: f32,

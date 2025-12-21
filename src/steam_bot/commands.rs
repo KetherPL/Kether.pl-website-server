@@ -177,7 +177,7 @@ impl CommandHandler for StatusCommand {
     
     fn execute_async_owned(
         &self,
-        _args: String,
+        args: String,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
         Box::pin(async move {
             // Get server configuration from registry
@@ -191,24 +191,73 @@ impl CommandHandler for StatusCommand {
                 return "Server Status: Configuration error".to_string();
             }
             
+            // Check if "full" argument is provided
+            let is_full = args.to_lowercase().trim() == "full" || args.to_lowercase().trim() == "f";
+            
             // Query the server asynchronously
             match LiveServerInfo::query_server_with_retry(&server_ip, server_port).await {
                 Ok(server_info) => {
-                    // Format the response as a summary
-                    format!(
-                        "Server: {}\nMap: {}\nPlayers: {}/{} (Bots: {})",
-                        server_info.name,
-                        server_info.map,
-                        server_info.players,
-                        server_info.maxplayers,
-                        server_info.bots
-                    )
+                    if is_full {
+                        // Format the response with player list
+                        let mut response = format!(
+                            "Server: {}\nMap: {}\nPlayers: {}/{} (Bots: {})\n",
+                            server_info.name,
+                            server_info.map,
+                            server_info.players,
+                            server_info.maxplayers,
+                            server_info.bots
+                        );
+                        
+                        if !server_info.playerdetails.is_empty() {
+                            // response.push_str("Players:\n");
+                            for player in &server_info.playerdetails {
+                                let duration_str = format_duration(player.duration);
+                                response.push_str(&format!("  • {} ({})\n", player.name, duration_str));
+                            }
+                            // Remove trailing newline
+                            response.pop();
+                        }
+                        
+                        response
+                    } else {
+                        // Format the response as a summary
+                        format!(
+                            "Server: {}\nMap: {}\nPlayers: {}/{} (Bots: {})",
+                            server_info.name,
+                            server_info.map,
+                            server_info.players,
+                            server_info.maxplayers,
+                            server_info.bots
+                        )
+                    }
                 }
                 Err(_) => {
                     "Server Status: Offline or unavailable".to_string()
                 }
             }
         })
+    }
+}
+
+/// Formats duration in seconds to a human-readable string
+/// 
+/// # Arguments
+/// * `seconds` - Duration in seconds as f32
+/// 
+/// # Returns
+/// Formatted string like "5m 30s" or "1h 15m" or "45s"
+fn format_duration(seconds: f32) -> String {
+    let total_seconds = seconds as u64;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let secs = total_seconds % 60;
+    
+    if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, secs)
+    } else {
+        format!("{}s", secs)
     }
 }
 

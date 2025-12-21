@@ -27,7 +27,7 @@ mod fastdl_rest;
 #[cfg(feature = "rest_call_for_sub")]
 mod call_for_sub_rest;
 #[cfg(feature = "rest_call_for_sub")]
-mod SteamBot;
+mod steam_bot;
 
 #[cfg(feature = "rest_json_db")]
 mod json_cmds_binds_rest;
@@ -148,7 +148,7 @@ async fn main() {
 		});
 		// Start the SteamBot
 		spawn(async {
-			if let Err(e) = SteamBot::main().await {
+			if let Err(e) = steam_bot::main().await {
 				eprintln!("SteamBot error: {}", e);
 			}
 		});

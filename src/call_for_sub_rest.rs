@@ -3,7 +3,7 @@
 use rocket::{http::Status, post, routes, serde::json::Json, State};
 use steam_rs::{steam_id::SteamId, Steam};
 use rocket::serde::Deserialize;
-use crate::{config::Config, SteamBot::SteamBot};
+use crate::{config::Config, steam_bot::SteamBot};
 use colored::Colorize;
 use std::sync::Arc;
 use tokio::sync::Semaphore;

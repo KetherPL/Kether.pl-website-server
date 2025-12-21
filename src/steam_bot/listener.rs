@@ -162,8 +162,34 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
     // Parse command and arguments
     let (command, args) = parse_command(&command_text);
     
-    // Handle command
+    // Handle command (try async first, fall back to sync)
     let registry = CommandRegistry::new();
+    
+    // Check if command supports async execution
+    let chat_group_id = message.chat_group_id;
+    let chat_id = message.chat_id;
+    
+    if let Some(async_future) = registry.handle_async(&command, &args, message) {
+        // Spawn async task to handle the command and send response
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    let response = async_future.await;
+                    if let Err(e) = MessageSender::send_to_chat_global(&response, chat_group_id, chat_id).await {
+                        eprintln!("Failed to send command response: {}", e);
+                    }
+                });
+                // Return immediately, response will be sent asynchronously
+                return Some("Querying server...".to_string());
+            }
+            Err(e) => {
+                eprintln!("Failed to get runtime handle for async command: {}", e);
+                // Fall through to sync execution
+            }
+        }
+    }
+    
+    // Fall back to synchronous execution
     registry.handle(&command, &args, message)
 }
 

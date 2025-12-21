@@ -11,12 +11,12 @@ use std::time::{Duration, Instant};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
 pub struct L4D2ServerInfo {
-	name: String,
-	map: String,
-	players: u8, //num of players already on the server
-	maxplayers: u8,
-	bots: u8,
-	playerdetails: Vec<PD>, //players list + score + duration
+	pub name: String,
+	pub map: String,
+	pub players: u8, //num of players already on the server
+	pub maxplayers: u8,
+	pub bots: u8,
+	pub playerdetails: Vec<PD>, //players list + score + duration
 	// Add other fields as needed based on the gamedig response
 }
 
@@ -53,7 +53,7 @@ fn get_cache() -> &'static RwLock<Option<(L4D2ServerInfo, Instant)>> {
 /// - 5-second timeout per attempt
 /// - Response caching (60 seconds)
 /// - Proper HTTP status codes
-async fn query_server_with_retry(ip: &str, port: u16) -> Result<L4D2ServerInfo, Status> {
+pub async fn query_server_with_retry(ip: &str, port: u16) -> Result<L4D2ServerInfo, Status> {
 	const MAX_RETRIES: u32 = 3;
 	const CACHE_TTL_SECS: u64 = 60;
 	

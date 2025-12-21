@@ -6,6 +6,12 @@
 # Add Steam IDs here, one per line for clarity, divided by commas
 frontend_admins = []
 
+# L4D2 Server Configuration
+# Server address used for !status command and server queries
+[server]
+ip = "192.168.1.102"
+port = 27015
+
 [steam]
 # Steam Web API key for fetching user data (name, avatar, profile, etc.)
 # Get your key from: https://steamcommunity.com/dev/apikey

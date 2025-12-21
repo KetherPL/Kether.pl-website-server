@@ -21,6 +21,9 @@ struct ConfigFile {
 
 	#[serde(default)]
 	steam: SteamConfig,
+
+	#[serde(default)]
+	server: ServerConfig,
 }
 
 /// Steam-related configuration
@@ -62,11 +65,25 @@ struct ChatConfig {
 	chat_id: u64,
 }
 
+/// L4D2 server configuration
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ServerConfig {
+	/// IP address of the L4D2 server
+	#[serde(default)]
+	ip: String,
+	
+	/// Port number of the L4D2 server
+	#[serde(default)]
+	port: u16,
+}
+
 impl Default for ConfigFile {
 	fn default() -> Self {
 		ConfigFile {
 			frontend_admins: Vec::new(),
 			steam: SteamConfig::default(),
+			server: ServerConfig::default(),
 		}
 	}
 }
@@ -99,6 +116,15 @@ impl Default for ChatConfig {
 	}
 }
 
+impl Default for ServerConfig {
+	fn default() -> Self {
+		ServerConfig {
+			ip: "54.36.179.182".to_string(),
+			port: 27015,
+		}
+	}
+}
+
 /// Public configuration structure for the Kether Internal Services Server
 /// 
 /// This struct holds all configuration values in a flat structure
@@ -111,6 +137,8 @@ impl Default for ChatConfig {
 /// * `chat_id` - Steam chat ID for message sending
 /// * `steam_account` - Steam account username for bot login
 /// * `steam_password` - Steam account password for bot login
+/// * `server_ip` - IP address of the L4D2 server
+/// * `server_port` - Port number of the L4D2 server
 #[derive(Debug)]
 pub struct Config {
 	pub frontend_admins: Vec<i64>,
@@ -119,6 +147,8 @@ pub struct Config {
 	pub chat_id: u64,
 	pub steam_account: String,
 	pub steam_password: String,
+	pub server_ip: String,
+	pub server_port: u16,
 }
 
 impl Config {
@@ -152,6 +182,8 @@ impl Config {
 			chat_id: config_file.steam.chat.chat_id,
 			steam_account: config_file.steam.bot.username,
 			steam_password: config_file.steam.bot.password,
+			server_ip: config_file.server.ip,
+			server_port: config_file.server.port,
 		})
 	}
 	
@@ -164,6 +196,12 @@ impl Config {
 # Users with these Steam IDs have admin permissions on the frontend
 # Add Steam IDs here, one per line for clarity, divided by commas
 frontend_admins = []
+
+# L4D2 Server Configuration
+# Server address used for !status command and server queries
+[server]
+ip = ""
+port = 0
 
 [steam]
 # Steam Web API key for fetching user data (name, avatar, profile, etc.)
@@ -194,6 +232,22 @@ chat_id = 0
 	/// * `false` otherwise
 	pub fn is_admin(&self, steam_id: i64) -> bool {
 		self.frontend_admins.contains(&steam_id)
+	}
+
+	/// Get the L4D2 server IP address
+	/// 
+	/// # Returns
+	/// The server IP address as a string
+	pub fn server_ip(&self) -> &str {
+		&self.server_ip
+	}
+
+	/// Get the L4D2 server port number
+	/// 
+	/// # Returns
+	/// The server port number
+	pub fn server_port(&self) -> u16 {
+		self.server_port
 	}
 }
 

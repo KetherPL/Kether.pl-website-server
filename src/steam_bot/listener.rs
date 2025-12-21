@@ -174,13 +174,34 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 handle.spawn(async move {
+                    // Send placeholder message and capture its PreprocessedMessage
+                    let placeholder_preprocessed = match MessageSender::send_to_chat_global_with_preprocessed("Querying server...", chat_group_id, chat_id).await {
+                        Ok(preprocessed) => Some(preprocessed),
+                        Err(e) => {
+                            eprintln!("Failed to send placeholder message: {}", e);
+                            None
+                        }
+                    };
+                    
+                    // Execute the async command
                     let response = async_future.await;
+                    
+                    // Send the actual response
                     if let Err(e) = MessageSender::send_to_chat_global(&response, chat_group_id, chat_id).await {
                         eprintln!("Failed to send command response: {}", e);
                     }
+                    
+                    // Delete the placeholder message if we have its PreprocessedMessage
+                    // The PreprocessedMessage contains both ordinal and server_timestamp required for deletion
+                    if let Some(preprocessed) = placeholder_preprocessed {
+                        if let Err(e) = MessageSender::delete_message_global(chat_group_id, chat_id, preprocessed).await {
+                            eprintln!("Failed to delete placeholder message: {}", e);
+                            // Don't fail the command if deletion fails
+                        }
+                    }
                 });
-                // Return immediately, response will be sent asynchronously
-                return Some("Querying server...".to_string());
+                // Return None since the async task handles sending the placeholder
+                return None;
             }
             Err(e) => {
                 eprintln!("Failed to get runtime handle for async command: {}", e);

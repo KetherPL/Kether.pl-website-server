@@ -98,7 +98,8 @@ impl SteamBot {
     /// SteamBot::send_message_global("!sub").await?;
     /// ```
     pub async fn send_message_global(message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        MessageSender::send_global(message).await
+        let _ = MessageSender::send_global(message).await?;
+        Ok(())
     }
 }
 

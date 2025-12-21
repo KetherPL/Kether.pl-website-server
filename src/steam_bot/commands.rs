@@ -139,7 +139,7 @@ impl CommandRegistry {
         &self,
         command: &str,
         args: &str,
-        message: &EnhancedGroupChatMessage,
+        _message: &EnhancedGroupChatMessage,
     ) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>> {
         let command_lower = command.to_lowercase();
         if let Some(handler) = self.handlers.get(&command_lower) {
@@ -150,6 +150,52 @@ impl CommandRegistry {
         } else {
             None
         }
+    }
+    
+    /// Gets command groups with aliases and descriptions
+    /// 
+    /// Groups commands by their handler type and returns information about
+    /// each command group including aliases and usage.
+    /// 
+    /// # Returns
+    /// A vector of tuples: (aliases, description)
+    pub fn get_command_groups(&self) -> Vec<(Vec<String>, String)> {
+        // Manually define command groups based on known aliases
+        // This is simpler than trying to use TypeId with trait objects
+        let mut groups: Vec<(Vec<String>, String)> = Vec::new();
+        
+        // Help command group
+        let mut help_aliases = Vec::new();
+        if self.handlers.contains_key("help") {
+            help_aliases.push("!help".to_string());
+        }
+        if self.handlers.contains_key("h") {
+            help_aliases.push("!h".to_string());
+        }
+        if !help_aliases.is_empty() {
+            help_aliases.sort();
+            groups.push((help_aliases, "Lists all available commands.".to_string()));
+        }
+        
+        // Status command group (only if server_query feature is enabled)
+        #[cfg(feature = "server_query")]
+        {
+            let mut status_aliases = Vec::new();
+            if self.handlers.contains_key("status") {
+                status_aliases.push("!status".to_string());
+            }
+            if self.handlers.contains_key("s") {
+                status_aliases.push("!s".to_string());
+            }
+            if !status_aliases.is_empty() {
+                status_aliases.sort();
+                groups.push((status_aliases, "Shows server status. Use 'f' or 'full' argument to see player list with play times.".to_string()));
+            }
+        }
+        
+        // Sort groups by first alias
+        groups.sort_by(|a, b| a.0[0].cmp(&b.0[0]));
+        groups
     }
     
     /// Gets a list of all registered command names (excluding test command)
@@ -257,22 +303,25 @@ impl CommandHandler for StatusCommand {
     }
 }
 
+
 /// Help command handler
 /// 
-/// Lists all available commands (excluding test command).
+/// Lists all available commands (excluding test command) with aliases and descriptions.
 struct HelpCommand;
 
 impl CommandHandler for HelpCommand {
     fn execute(&self, _args: &str, _message: &EnhancedGroupChatMessage) -> String {
         let registry = CommandRegistry::new();
-        let commands = registry.get_command_names();
+        let groups = registry.get_command_groups();
         
-        if commands.is_empty() {
+        if groups.is_empty() {
             "No commands available.".to_string()
         } else {
             let mut response = "Available commands:\n".to_string();
-            for cmd in commands {
-                response.push_str(&format!("  • !{}\n", cmd));
+            for (aliases, description) in groups {
+                // Join aliases with commas
+                let aliases_str = aliases.join(", ");
+                response.push_str(&format!("  {}\n    {}\n", aliases_str, description));
             }
             response.pop(); // Remove trailing newline
             response
@@ -286,14 +335,16 @@ impl CommandHandler for HelpCommand {
         // Help command is synchronous, so we just return the result immediately
         Box::pin(async move {
             let registry = CommandRegistry::new();
-            let commands = registry.get_command_names();
+            let groups = registry.get_command_groups();
             
-            if commands.is_empty() {
+            if groups.is_empty() {
                 "No commands available.".to_string()
             } else {
                 let mut response = "Available commands:\n".to_string();
-                for cmd in commands {
-                    response.push_str(&format!("  • !{}\n", cmd));
+                for (aliases, description) in groups {
+                    // Join aliases with commas
+                    let aliases_str = aliases.join(", ");
+                    response.push_str(&format!("  {}\n    {}\n", aliases_str, description));
                 }
                 response.pop(); // Remove trailing newline
                 response

@@ -78,3 +78,11 @@ pub fn config() -> &'static Config {
     CONFIG.get().expect("Config not initialized")
 }
 
+/// Gets the global configuration if available
+/// 
+/// # Returns
+/// `Some(&Config)` if the configuration has been initialized, `None` otherwise
+pub fn config_opt() -> Option<&'static Config> {
+    CONFIG.get()
+}
+

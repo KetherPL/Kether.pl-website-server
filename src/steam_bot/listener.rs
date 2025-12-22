@@ -2,7 +2,10 @@
 
 use crate::steam_bot::bot::SteamBot;
 use crate::steam_bot::commands::CommandRegistry;
+use crate::steam_bot::connection::ConnectionManager;
 use crate::steam_bot::messaging::MessageSender;
+use crate::steam_bot::registry;
+use crate::steam_bot::utils::is_connection_error;
 use SC_Sub_Poster::EnhancedGroupChatMessage;
 use std::error::Error;
 use std::sync::Arc;
@@ -44,14 +47,47 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                     Err(e) => {
                         // Convert error to string immediately to ensure Send
                         let error_msg = format!("{}", e);
-                        eprintln!("Message listener error: {}, retrying...", error_msg);
-                        wait_before_retry().await;
+                        eprintln!("Message listener error: {}", error_msg);
+                        
+                        // Check if this is a connection error and attempt recovery
+                        if is_connection_error(&error_msg) {
+                            eprintln!("Connection error detected, attempting reconnection...");
+                            if let Some(config) = registry::config_opt() {
+                                match ConnectionManager::reconnect(&bot, config).await {
+                                    Ok(()) => {
+                                        println!("Successfully reconnected, retrying listener...");
+                                        // Wait a bit before retrying to ensure connection is stable
+                                        wait_before_retry().await;
+                                    }
+                                    Err(reconnect_err) => {
+                                        eprintln!("Failed to reconnect: {}, retrying listener anyway...", reconnect_err);
+                                        wait_before_retry().await;
+                                    }
+                                }
+                            } else {
+                                eprintln!("Config not available, cannot reconnect. Retrying listener...");
+                                wait_before_retry().await;
+                            }
+                        } else {
+                            // Not a connection error, just wait and retry
+                            eprintln!("Non-connection error, retrying...");
+                            wait_before_retry().await;
+                        }
                     }
                 }
             }
             None => {
                 eprintln!("Warning: Steam session not available, message listener cannot start");
-                return Ok(());
+                // If session is not available, try to reconnect if config is available
+                if let Some(config) = registry::config_opt() {
+                    eprintln!("Attempting to reconnect...");
+                    if let Err(e) = ConnectionManager::reconnect(&bot, config).await {
+                        eprintln!("Failed to reconnect: {}", e);
+                    }
+                    wait_before_retry().await;
+                } else {
+                    return Ok(());
+                }
             }
         }
     }

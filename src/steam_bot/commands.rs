@@ -5,6 +5,8 @@ use crate::LiveServerInfo;
 use crate::steam_bot::registry;
 use SC_Sub_Poster::EnhancedGroupChatMessage;
 use std::collections::HashMap;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+use chrono_tz::Europe::Warsaw;
 
 /// Trait for command handlers
 /// 
@@ -93,6 +95,10 @@ impl CommandRegistry {
         // Register the help command
         registry.register("h", Box::new(HelpCommand));
         registry.register("help", Box::new(HelpCommand));
+        
+        // Register the plan command
+        registry.register("p", Box::new(PlanCommand));
+        registry.register("plan", Box::new(PlanCommand));
         
         registry
     }
@@ -191,6 +197,19 @@ impl CommandRegistry {
                 status_aliases.sort();
                 groups.push((status_aliases, "Shows server status. Use 'f' or 'full' argument to see player list with play times.".to_string()));
             }
+        }
+        
+        // Plan command group
+        let mut plan_aliases = Vec::new();
+        if self.handlers.contains_key("plan") {
+            plan_aliases.push("!plan".to_string());
+        }
+        if self.handlers.contains_key("p") {
+            plan_aliases.push("!p".to_string());
+        }
+        if !plan_aliases.is_empty() {
+            plan_aliases.sort();
+            groups.push((plan_aliases, "Converts time to Unix timestamp. Formats: 19:00, 18.30, or 16 (CET/CEST)".to_string()));
         }
         
         // Sort groups by first alias
@@ -372,6 +391,176 @@ fn format_duration(seconds: f32) -> String {
         format!("{}m {}s", minutes, secs)
     } else {
         format!("{}s", secs)
+    }
+}
+
+/// Parses a time string in multiple formats (HH:MM, HH.MM, or HH)
+/// 
+/// # Arguments
+/// * `time_str` - The time string to parse
+/// 
+/// # Returns
+/// * `Ok((hours, minutes))` - Parsed hours and minutes
+/// * `Err(String)` - Error message if parsing fails
+/// 
+/// # Examples
+/// - "19:00" → Ok((19, 0))
+/// - "18.30" → Ok((18, 30))
+/// - "16" → Ok((16, 0))
+fn parse_time_string(time_str: &str) -> Result<(u8, u8), String> {
+    let trimmed = time_str.trim();
+    
+    if trimmed.is_empty() {
+        return Err("Time string cannot be empty".to_string());
+    }
+    
+    // Try colon format (HH:MM)
+    if let Some(colon_pos) = trimmed.find(':') {
+        let hours_str = &trimmed[..colon_pos];
+        let minutes_str = &trimmed[colon_pos + 1..];
+        
+        let hours: u8 = hours_str.parse()
+            .map_err(|_| format!("Invalid hours: {}", hours_str))?;
+        let minutes: u8 = minutes_str.parse()
+            .map_err(|_| format!("Invalid minutes: {}", minutes_str))?;
+        
+        if hours > 23 {
+            return Err("Hours must be between 0 and 23".to_string());
+        }
+        if minutes > 59 {
+            return Err("Minutes must be between 0 and 59".to_string());
+        }
+        
+        return Ok((hours, minutes));
+    }
+    
+    // Try dot format (HH.MM)
+    if let Some(dot_pos) = trimmed.find('.') {
+        let hours_str = &trimmed[..dot_pos];
+        let minutes_str = &trimmed[dot_pos + 1..];
+        
+        let hours: u8 = hours_str.parse()
+            .map_err(|_| format!("Invalid hours: {}", hours_str))?;
+        let minutes: u8 = minutes_str.parse()
+            .map_err(|_| format!("Invalid minutes: {}", minutes_str))?;
+        
+        if hours > 23 {
+            return Err("Hours must be between 0 and 23".to_string());
+        }
+        if minutes > 59 {
+            return Err("Minutes must be between 0 and 59".to_string());
+        }
+        
+        return Ok((hours, minutes));
+    }
+    
+    // Try hour-only format (HH)
+    let hours: u8 = trimmed.parse()
+        .map_err(|_| format!("Invalid time format. Use HH:MM, HH.MM, or HH (e.g., 19:00, 18.30, or 16)"))?;
+    
+    if hours > 23 {
+        return Err("Hours must be between 0 and 23".to_string());
+    }
+    
+    Ok((hours, 0))
+}
+
+/// Converts hours and minutes to Unix timestamp using CET/CEST timezone
+/// 
+/// # Arguments
+/// * `hours` - Hours (0-23)
+/// * `minutes` - Minutes (0-59)
+/// 
+/// # Returns
+/// * `Ok(i64)` - Unix timestamp in seconds
+/// * `Err(String)` - Error message if conversion fails
+fn time_to_unix_timestamp(hours: u8, minutes: u8) -> Result<i64, String> {
+    // Get current date/time in CET/CEST
+    let now_utc = chrono::Utc::now();
+    let now_cet = now_utc.with_timezone(&Warsaw);
+    
+    // Get current date in CET/CEST
+    let current_date = now_cet.date_naive();
+    
+    // Create NaiveTime from hours and minutes
+    let time = NaiveTime::from_hms_opt(hours as u32, minutes as u32, 0)
+        .ok_or_else(|| "Failed to create time from hours and minutes".to_string())?;
+    
+    // Combine date and time
+    let naive_dt = NaiveDateTime::new(current_date, time);
+    
+    // Convert to timezone-aware DateTime in CET/CEST
+    let dt_cet = Warsaw.from_local_datetime(&naive_dt)
+        .single()
+        .ok_or_else(|| "Failed to convert to CET/CEST timezone".to_string())?;
+    
+    // Convert to Unix timestamp
+    Ok(dt_cet.timestamp())
+}
+
+/// Plan command handler
+/// 
+/// Converts a time string to Unix timestamp and outputs it to console and chat.
+struct PlanCommand;
+
+impl CommandHandler for PlanCommand {
+    fn execute(&self, args: &str, _message: &EnhancedGroupChatMessage) -> String {
+        // Check if time argument is provided
+        let time_str = args.trim();
+        if time_str.is_empty() {
+            return "Usage: !plan <time> (e.g., !plan 19:00, !plan 18.30, or !plan 16)".to_string();
+        }
+        
+        // Parse the time string
+        let (hours, minutes) = match parse_time_string(time_str) {
+            Ok(parsed) => parsed,
+            Err(e) => return e,
+        };
+        
+        // Convert to Unix timestamp
+        let timestamp = match time_to_unix_timestamp(hours, minutes) {
+            Ok(ts) => ts,
+            Err(e) => return format!("Failed to convert time to Unix timestamp: {}", e),
+        };
+        
+        // Print to console
+        println!("Plan command: {}:{} → Unix timestamp: {}", hours, minutes, timestamp);
+        
+        // Return timestamp as string for chat response
+        timestamp.to_string()
+    }
+    
+    fn execute_async_owned(
+        &self,
+        args: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
+        // Plan command is synchronous, so we just return the result immediately
+        // Since execute() doesn't use the message parameter, we can duplicate the logic here
+        Box::pin(async move {
+            // Check if time argument is provided
+            let time_str = args.trim();
+            if time_str.is_empty() {
+                return "Usage: !plan <time> (e.g., !plan 19:00, !plan 18.30, or !plan 16)".to_string();
+            }
+            
+            // Parse the time string
+            let (hours, minutes) = match parse_time_string(time_str) {
+                Ok(parsed) => parsed,
+                Err(e) => return e,
+            };
+            
+            // Convert to Unix timestamp
+            let timestamp = match time_to_unix_timestamp(hours, minutes) {
+                Ok(ts) => ts,
+                Err(e) => return format!("Failed to convert time to Unix timestamp: {}", e),
+            };
+            
+            // Print to console
+            println!("Plan command: {}:{} → Unix timestamp: {}", hours, minutes, timestamp);
+            
+            // Return timestamp as string for chat response
+            timestamp.to_string()
+        })
     }
 }
 

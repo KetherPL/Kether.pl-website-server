@@ -18,6 +18,9 @@ use tokio::sync::broadcast;
 /// 
 /// # Protocol
 /// - On connection, clients receive: "Connected to plan timestamp stream"
+/// - Immediately after connection, clients receive the current state:
+///   - "SET <timestamp>" if there's an active reservation (e.g., "SET 1234567890")
+///   - "CLEAR" if there's no active reservation
 /// - When a reservation is set, clients receive: "SET <timestamp>" (e.g., "SET 1234567890")
 /// - When a reservation is cleared (manually or automatically), clients receive: "CLEAR"
 /// - On channel closure, clients receive: "Connection closed"
@@ -44,6 +47,22 @@ pub fn plan_timestamp_stream(_ws: WebSocket) -> Stream!['static] {
         
         // Send welcome message
         yield "Connected to plan timestamp stream".into();
+        
+        // Send current reservation state if one exists and hasn't expired
+        // This ensures clients that connect after a reservation is set will receive it
+        if let Some(timestamp) = crate::steam_bot::plan_broadcast::get_current_timestamp() {
+            let current_time = chrono::Utc::now().timestamp();
+            if current_time < timestamp {
+                // Timestamp is still valid (not expired)
+                yield format!("SET {}", timestamp).into();
+            } else {
+                // Timestamp has expired, send CLEAR
+                yield "CLEAR".into();
+            }
+        } else {
+            // No reservation set, send CLEAR
+            yield "CLEAR".into();
+        }
         
         // Listen for broadcasts (SET <timestamp> or CLEAR)
         loop {

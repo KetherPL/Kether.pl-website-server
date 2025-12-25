@@ -254,6 +254,35 @@ pub fn broadcast_message(message: String) {
     }
 }
 
+/// Gets the current reservation timestamp, if any
+/// 
+/// This function returns the currently stored reservation timestamp.
+/// It's useful for sending the current state to newly connected WebSocket clients.
+/// 
+/// # Returns
+/// * `Some(timestamp)` - If there's an active reservation
+/// * `None` - If no reservation is currently set
+/// 
+/// # Note
+/// This function gracefully handles the case where the state hasn't been
+/// initialized yet (e.g., if called before Rocket starts). In such cases, it
+/// returns `None`.
+#[cfg(feature = "rest_api")]
+pub fn get_current_timestamp() -> Option<i64> {
+    if let Some(last_ts) = LAST_TIMESTAMP.get() {
+        let ts_guard = match last_ts.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when getting current timestamp: {}", e);
+                return None;
+            }
+        };
+        *ts_guard
+    } else {
+        None
+    }
+}
+
 /// Gets a new receiver for the broadcast channel
 /// 
 /// This function creates a new receiver that can be used to subscribe to

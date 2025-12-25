@@ -556,7 +556,14 @@ impl PlanCommand {
         // Check if time argument is provided
         let time_str = args.trim();
         if time_str.is_empty() {
-            return "Usage: !plan <time> (e.g., !plan 19:00, !plan 18.30, or !plan 16)".to_string();
+            return "Usage: !plan <time> (e.g., !plan 19:00, !plan 18.30, or !plan 16) or !plan clear".to_string();
+        }
+        
+        // Check for clear command
+        if time_str.eq_ignore_ascii_case("clear") || time_str == "-1" {
+            #[cfg(feature = "rest_api")]
+            crate::steam_bot::plan_broadcast::clear_reservation();
+            return "Reservation cleared.".to_string();
         }
         
         // Parse the time string
@@ -574,9 +581,9 @@ impl PlanCommand {
         // Print to console
         println!("Plan command: {}:{} → Unix timestamp: {}", hours, minutes, timestamp);
         
-        // Broadcast timestamp to WebSocket clients
+        // Set reservation timestamp (this also broadcasts "SET <timestamp>" and starts expiration checker)
         #[cfg(feature = "rest_api")]
-        crate::steam_bot::plan_broadcast::broadcast_timestamp(timestamp);
+        crate::steam_bot::plan_broadcast::set_reservation_timestamp(timestamp);
         
         // Return timestamp as string for chat response
         timestamp.to_string()

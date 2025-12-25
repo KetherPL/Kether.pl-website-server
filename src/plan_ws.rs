@@ -7,10 +7,10 @@ use rocket_ws::{WebSocket, Stream};
 #[cfg(feature = "rest_api")]
 use tokio::sync::broadcast;
 
-/// WebSocket endpoint for receiving plan timestamps
+/// WebSocket endpoint for receiving plan timestamps and CLEAR messages
 /// 
-/// This endpoint allows clients to connect via WebSocket and receive Unix timestamps
-/// in real-time whenever the `!plan` command is executed. Timestamps are sent as
+/// This endpoint allows clients to connect via WebSocket and receive reservation updates
+/// in real-time whenever the `!plan` command is executed. Messages are sent as
 /// plain text strings (not JSON).
 /// 
 /// # Route
@@ -18,15 +18,21 @@ use tokio::sync::broadcast;
 /// 
 /// # Protocol
 /// - On connection, clients receive: "Connected to plan timestamp stream"
-/// - Each timestamp is sent as "SET <timestamp>" (e.g., "SET 1234567890")
+/// - When a reservation is set, clients receive: "SET <timestamp>" (e.g., "SET 1234567890")
+/// - When a reservation is cleared (manually or automatically), clients receive: "CLEAR"
 /// - On channel closure, clients receive: "Connection closed"
 /// 
 /// # Example Client Usage
 /// ```javascript
 /// const ws = new WebSocket('ws://localhost:3001/api/ws/plan');
 /// ws.onmessage = (event) => {
-///     const timestamp = parseInt(event.data);
-///     console.log('Received timestamp:', timestamp);
+///     const message = event.data;
+///     if (message.startsWith('SET ')) {
+///         const timestamp = parseInt(message.substring(4));
+///         console.log('Reservation set:', timestamp);
+///     } else if (message === 'CLEAR') {
+///         console.log('Reservation cleared');
+///     }
 /// };
 /// ```
 #[cfg(feature = "rest_api")]
@@ -39,14 +45,14 @@ pub fn plan_timestamp_stream(_ws: WebSocket) -> Stream!['static] {
         // Send welcome message
         yield "Connected to plan timestamp stream".into();
         
-        // Listen for timestamp broadcasts
+        // Listen for broadcasts (SET <timestamp> or CLEAR)
         loop {
             tokio::select! {
                 result = rx.recv() => {
                     match result {
-                        Ok(timestamp) => {
-                            // Send timestamp with "SET " prefix for SourceMod plugin compatibility
-                            yield format!("SET {}", timestamp).into();
+                        Ok(message) => {
+                            // Messages are already formatted as "SET <timestamp>" or "CLEAR"
+                            yield message.into();
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             // Channel is closed, notify client and exit

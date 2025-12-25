@@ -17,6 +17,7 @@ colored = { version = "3.0.0", optional = true }
 gamedig = { version = "0.6.1", optional = true }
 rocket = { version = "0.5.1", features = ["json"], optional = true, default-features = false }
 rocket_cors = { version = "0.6.0", optional = true }
+rocket_ws = { version = "0.1", optional = true }
 toml = { version = "0.8", optional = true }
 steam-rs = { version = "0.5.1", optional = true }
 tokio = { version = "1.46.1", features = ["rt-multi-thread", "macros"] }
@@ -46,4 +47,4 @@ default = ["kether_meta", "sat"] # Features starter pack
         server_query = ["dep:gamedig"] # Query L4D2 servers (either through CLI or REST API)
         rest_call_for_sub = ["cfg", "rest_api", "dep:SC_Sub_Poster"] # REST API – Uses NodeJS to post `!sub` requests on the Steam Group Chat
             cfg = ["dep:colored", "dep:toml"] # config.toml – Steam Web API key, bot credentials, chat IDs
-            rest_api = ["dep:rocket", "dep:rocket_cors"] # Base REST API support
+            rest_api = ["dep:rocket", "dep:rocket_cors", "dep:rocket_ws"] # Base REST API support

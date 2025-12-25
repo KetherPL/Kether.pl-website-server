@@ -84,6 +84,12 @@ pub fn rocket() -> Rocket<Build> {
 		.configure(rocket::Config::figment().merge(("port", 3001))) // NodeJS / React port
 		.attach(cors.clone());
 
+	#[cfg(feature = "rest_api")]
+	{
+		// Initialize the plan timestamp broadcaster
+		crate::steam_bot::plan_broadcast::init_broadcaster();
+	}
+
 	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "rest_json_db"))]
 	{
 		let config = smol::block_on(Config::load()).expect("Failed to load configuration");
@@ -125,6 +131,12 @@ pub fn rocket() -> Rocket<Build> {
 		
 		// Register FastDL catcher for directory listings (handles 404s from FileServer)
 		rocket_build = rocket_build.register("/fastdl", crate::fastdl_rest::mount_fastdl_catchers());
+	}
+
+	#[cfg(feature = "rest_api")]
+	{
+		// Mount WebSocket routes for plan timestamp streaming
+		rocket_build = rocket_build.mount("/api/ws", crate::plan_ws::mount_plan_ws_routes());
 	}
 
 	rocket_build

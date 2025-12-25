@@ -36,6 +36,9 @@ mod json_api;
 #[cfg(feature = "rest_json_db")]
 mod json_storage;
 
+#[cfg(feature = "rest_api")]
+mod plan_ws;
+
 mod repl;
 
 /// Command line arguments parser for the Kether Internal Services Server

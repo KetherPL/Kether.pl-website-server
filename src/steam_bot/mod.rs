@@ -38,6 +38,7 @@ mod commands;
 mod connection;
 mod listener;
 mod messaging;
+pub mod plan_broadcast;
 mod registry;
 mod service;
 mod state;

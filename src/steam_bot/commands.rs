@@ -5,7 +5,7 @@ use crate::LiveServerInfo;
 use crate::steam_bot::registry;
 use SC_Sub_Poster::EnhancedGroupChatMessage;
 use std::collections::HashMap;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+use chrono::{NaiveDateTime, NaiveTime, TimeZone};
 use chrono_tz::Europe::Warsaw;
 
 /// Trait for command handlers
@@ -415,9 +415,16 @@ fn parse_time_string(time_str: &str) -> Result<(u8, u8), String> {
     }
     
     // Try colon format (HH:MM)
+    // Note: If seconds are provided (HH:MM:SS), we ignore them and only use HH:MM
     if let Some(colon_pos) = trimmed.find(':') {
         let hours_str = &trimmed[..colon_pos];
-        let minutes_str = &trimmed[colon_pos + 1..];
+        // Take only the first two parts (HH:MM), ignore seconds if present
+        let after_colon = &trimmed[colon_pos + 1..];
+        let minutes_str = if let Some(second_colon_pos) = after_colon.find(':') {
+            &after_colon[..second_colon_pos]
+        } else {
+            after_colon
+        };
         
         let hours: u8 = hours_str.parse()
             .map_err(|_| format!("Invalid hours: {}", hours_str))?;
@@ -435,9 +442,16 @@ fn parse_time_string(time_str: &str) -> Result<(u8, u8), String> {
     }
     
     // Try dot format (HH.MM)
+    // Note: If additional dots are provided (HH.MM.SS), we ignore them and only use HH.MM
     if let Some(dot_pos) = trimmed.find('.') {
         let hours_str = &trimmed[..dot_pos];
-        let minutes_str = &trimmed[dot_pos + 1..];
+        // Take only the first two parts (HH.MM), ignore seconds if present
+        let after_dot = &trimmed[dot_pos + 1..];
+        let minutes_str = if let Some(second_dot_pos) = after_dot.find('.') {
+            &after_dot[..second_dot_pos]
+        } else {
+            after_dot
+        };
         
         let hours: u8 = hours_str.parse()
             .map_err(|_| format!("Invalid hours: {}", hours_str))?;
@@ -474,6 +488,10 @@ fn parse_time_string(time_str: &str) -> Result<(u8, u8), String> {
 /// # Returns
 /// * `Ok(i64)` - Unix timestamp in seconds
 /// * `Err(String)` - Error message if conversion fails
+/// 
+/// # Note
+/// During DST transitions (especially fall back), ambiguous times are resolved
+/// by preferring the later occurrence (standard time).
 fn time_to_unix_timestamp(hours: u8, minutes: u8) -> Result<i64, String> {
     // Get current date/time in CET/CEST
     let now_utc = chrono::Utc::now();
@@ -490,9 +508,19 @@ fn time_to_unix_timestamp(hours: u8, minutes: u8) -> Result<i64, String> {
     let naive_dt = NaiveDateTime::new(current_date, time);
     
     // Convert to timezone-aware DateTime in CET/CEST
-    let dt_cet = Warsaw.from_local_datetime(&naive_dt)
-        .single()
-        .ok_or_else(|| "Failed to convert to CET/CEST timezone".to_string())?;
+    // During DST transitions, ambiguous times can occur (especially during fall back).
+    // We use .earliest() to prefer the first occurrence, or .latest() for the later one.
+    // For planning purposes, we'll use .latest() to prefer standard time during ambiguity.
+    let dt_cet = match Warsaw.from_local_datetime(&naive_dt) {
+        chrono::LocalResult::Single(dt) => dt,
+        chrono::LocalResult::Ambiguous(_dt1, dt2) => {
+            // During ambiguous time (DST fall back), prefer the later occurrence (standard time)
+            dt2
+        }
+        chrono::LocalResult::None => {
+            return Err("Time does not exist in CET/CEST timezone (invalid DST transition)".to_string());
+        }
+    };
     
     // Convert to Unix timestamp
     Ok(dt_cet.timestamp())
@@ -505,6 +533,26 @@ struct PlanCommand;
 
 impl CommandHandler for PlanCommand {
     fn execute(&self, args: &str, _message: &EnhancedGroupChatMessage) -> String {
+        Self::execute_plan(args)
+    }
+    
+    fn execute_async_owned(
+        &self,
+        args: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
+        // Plan command is synchronous, so we just return the result immediately
+        let result = Self::execute_plan(&args);
+        Box::pin(async move {
+            result
+        })
+    }
+}
+
+impl PlanCommand {
+    /// Internal implementation of the plan command logic
+    /// 
+    /// This method is shared between execute() and execute_async_owned() to avoid code duplication.
+    fn execute_plan(args: &str) -> String {
         // Check if time argument is provided
         let time_str = args.trim();
         if time_str.is_empty() {
@@ -526,41 +574,12 @@ impl CommandHandler for PlanCommand {
         // Print to console
         println!("Plan command: {}:{} → Unix timestamp: {}", hours, minutes, timestamp);
         
+        // Broadcast timestamp to WebSocket clients
+        #[cfg(feature = "rest_api")]
+        crate::steam_bot::plan_broadcast::broadcast_timestamp(timestamp);
+        
         // Return timestamp as string for chat response
         timestamp.to_string()
-    }
-    
-    fn execute_async_owned(
-        &self,
-        args: String,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
-        // Plan command is synchronous, so we just return the result immediately
-        // Since execute() doesn't use the message parameter, we can duplicate the logic here
-        Box::pin(async move {
-            // Check if time argument is provided
-            let time_str = args.trim();
-            if time_str.is_empty() {
-                return "Usage: !plan <time> (e.g., !plan 19:00, !plan 18.30, or !plan 16)".to_string();
-            }
-            
-            // Parse the time string
-            let (hours, minutes) = match parse_time_string(time_str) {
-                Ok(parsed) => parsed,
-                Err(e) => return e,
-            };
-            
-            // Convert to Unix timestamp
-            let timestamp = match time_to_unix_timestamp(hours, minutes) {
-                Ok(ts) => ts,
-                Err(e) => return format!("Failed to convert time to Unix timestamp: {}", e),
-            };
-            
-            // Print to console
-            println!("Plan command: {}:{} → Unix timestamp: {}", hours, minutes, timestamp);
-            
-            // Return timestamp as string for chat response
-            timestamp.to_string()
-        })
     }
 }
 

@@ -479,6 +479,25 @@ fn parse_time_string(time_str: &str) -> Result<(u8, u8), String> {
     Ok((hours, 0))
 }
 
+/// Converts Unix timestamp to CET/CEST time format (HH:MM)
+/// 
+/// # Arguments
+/// * `timestamp` - Unix timestamp in seconds
+/// 
+/// # Returns
+/// * `String` - Time formatted as "HH:MM" in CET/CEST timezone
+fn unix_timestamp_to_cet_time(timestamp: i64) -> String {
+    // Convert Unix timestamp to DateTime<Utc>
+    let dt_utc = chrono::DateTime::<chrono::Utc>::from_timestamp(timestamp, 0)
+        .expect("Invalid timestamp");
+    
+    // Convert to Warsaw timezone (CET/CEST)
+    let dt_cet = dt_utc.with_timezone(&Warsaw);
+    
+    // Format as "HH:MM"
+    dt_cet.format("%H:%M").to_string()
+}
+
 /// Converts hours and minutes to Unix timestamp using CET/CEST timezone
 /// 
 /// # Arguments
@@ -581,12 +600,31 @@ impl PlanCommand {
         // Print to console
         println!("Plan command: {}:{} → Unix timestamp: {}", hours, minutes, timestamp);
         
+        // Check for existing reservation before setting new one
+        let is_replan = {
+            #[cfg(feature = "rest_api")]
+            {
+                crate::steam_bot::plan_broadcast::get_current_timestamp().is_some()
+            }
+            #[cfg(not(feature = "rest_api"))]
+            {
+                false
+            }
+        };
+        
         // Set reservation timestamp (this also broadcasts "SET <timestamp>" and starts expiration checker)
         #[cfg(feature = "rest_api")]
         crate::steam_bot::plan_broadcast::set_reservation_timestamp(timestamp);
         
-        // Return timestamp as string for chat response
-        timestamp.to_string()
+        // Convert to CET time format
+        let time_str = unix_timestamp_to_cet_time(timestamp);
+        
+        // Return formatted message
+        if is_replan {
+            format!("Re-planned lobby time: {}", time_str)
+        } else {
+            format!("Planned lobby time: {}", time_str)
+        }
     }
 }
 

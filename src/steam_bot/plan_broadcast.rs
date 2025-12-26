@@ -157,69 +157,86 @@ fn start_expiration_checker(timestamp: i64) {
     let task_handle = EXPIRATION_TASK.get().expect("EXPIRATION_TASK not initialized").clone();
     let task_handle_for_closure = task_handle.clone();
     
-    // Get the current runtime handle or spawn on a new runtime
-    let handle = if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
-        rt_handle.spawn(async move {
-            loop {
-                // Check if timestamp has passed
-                let current_time = chrono::Utc::now().timestamp();
-                if current_time >= timestamp {
-                    // Timestamp has expired, clear reservation
-                    let mut ts_guard = match last_ts.lock() {
-                        Ok(guard) => guard,
-                        Err(e) => {
-                            eprintln!("Warning: Mutex poisoned in expiration checker: {}", e);
-                            let mut guard = e.into_inner();
-                            // Still try to clear if it matches
-                            if guard.as_ref().map(|&ts| ts == timestamp).unwrap_or(false) {
-                                *guard = None;
-                                if let Some(tx) = PLAN_BROADCASTER.get() {
-                                    let _ = tx.send("CLEAR".to_string());
-                                }
+    // Try to get the current runtime handle
+    let rt_handle = match tokio::runtime::Handle::try_current() {
+        Ok(handle) => handle,
+        Err(e) => {
+            // If we're not in a tokio runtime, we can't spawn tasks
+            // This should not happen in normal operation, but we handle it gracefully
+            eprintln!("Error: Cannot spawn expiration checker task - not in tokio runtime: {}", e);
+            eprintln!("This usually means set_reservation_timestamp() was called from outside an async context");
+            return;
+        }
+    };
+    
+    let handle = rt_handle.spawn(async move {
+        println!("Expiration checker started for timestamp: {} (current time: {})", timestamp, chrono::Utc::now().timestamp());
+        
+        loop {
+            // Check if timestamp has passed
+            let current_time = chrono::Utc::now().timestamp();
+            if current_time >= timestamp {
+                // Timestamp has expired, clear reservation
+                println!("Timestamp {} has expired (current: {}), clearing reservation", timestamp, current_time);
+                
+                let mut ts_guard = match last_ts.lock() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        eprintln!("Warning: Mutex poisoned in expiration checker: {}", e);
+                        let mut guard = e.into_inner();
+                        // Still try to clear if it matches
+                        if guard.as_ref().map(|&ts| ts == timestamp).unwrap_or(false) {
+                            *guard = None;
+                            if let Some(tx) = PLAN_BROADCASTER.get() {
+                                let _ = tx.send("CLEAR".to_string());
+                                println!("Broadcasted CLEAR message");
                             }
-                            break;
                         }
-                    };
-                    
-                    // Only clear if this is still the active timestamp
-                    if ts_guard.as_ref().map(|&ts| ts == timestamp).unwrap_or(false) {
-                        *ts_guard = None;
-                        
-                        // Broadcast "CLEAR"
-                        if let Some(tx) = PLAN_BROADCASTER.get() {
-                            let _ = tx.send("CLEAR".to_string());
-                        }
+                        break;
                     }
+                };
+                
+                // Only clear if this is still the active timestamp
+                if ts_guard.as_ref().map(|&ts| ts == timestamp).unwrap_or(false) {
+                    *ts_guard = None;
+                    println!("Cleared reservation timestamp");
                     
-                    // Cancel this task
-                    let mut handle_guard = match task_handle_for_closure.lock() {
-                        Ok(guard) => guard,
-                        Err(e) => {
-                            eprintln!("Warning: Mutex poisoned when cleaning up task handle: {}", e);
-                            e.into_inner().take();
-                            break;
-                        }
-                    };
-                    handle_guard.take();
-                    break;
+                    // Broadcast "CLEAR"
+                    if let Some(tx) = PLAN_BROADCASTER.get() {
+                        let _ = tx.send("CLEAR".to_string());
+                        println!("Broadcasted CLEAR message");
+                    }
+                } else {
+                    println!("Timestamp changed (current stored: {:?}), not clearing", *ts_guard);
                 }
                 
-                // Calculate how long to wait: either until timestamp expires, or 60 seconds, whichever is shorter
-                let time_until_expiry = timestamp - current_time;
-                let wait_duration = if time_until_expiry > 0 && time_until_expiry < 60 {
-                    time_until_expiry
-                } else {
-                    60
+                // Cancel this task
+                let mut handle_guard = match task_handle_for_closure.lock() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        eprintln!("Warning: Mutex poisoned when cleaning up task handle: {}", e);
+                        e.into_inner().take();
+                        break;
+                    }
                 };
-                tokio::time::sleep(tokio::time::Duration::from_secs(wait_duration as u64)).await;
+                handle_guard.take();
+                break;
             }
-        })
-    } else {
-        // If we're not in a tokio runtime, we can't spawn tasks
-        // This should not happen in normal operation, but we handle it gracefully
-        eprintln!("Warning: Cannot spawn expiration checker task - not in tokio runtime");
-        return;
-    };
+            
+            // Calculate how long to wait: either until timestamp expires, or 60 seconds, whichever is shorter
+            let time_until_expiry = timestamp - current_time;
+            let wait_duration = if time_until_expiry > 0 && time_until_expiry < 60 {
+                time_until_expiry
+            } else {
+                60
+            };
+            
+            println!("Expiration checker: waiting {} seconds (timestamp expires in {} seconds)", wait_duration, time_until_expiry);
+            tokio::time::sleep(tokio::time::Duration::from_secs(wait_duration as u64)).await;
+        }
+        
+        println!("Expiration checker task completed");
+    });
     
     // Store the task handle
     let mut handle_guard = match task_handle.lock() {
@@ -232,6 +249,7 @@ fn start_expiration_checker(timestamp: i64) {
         }
     };
     *handle_guard = Some(handle);
+    println!("Expiration checker task spawned and stored");
 }
 
 /// Broadcasts a message to all connected WebSocket clients

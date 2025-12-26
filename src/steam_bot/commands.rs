@@ -8,6 +8,12 @@ use std::collections::HashMap;
 use chrono::{NaiveDateTime, NaiveTime, TimeZone};
 use chrono_tz::Europe::Warsaw;
 
+// Constants for time validation and formatting
+const MAX_HOURS: u8 = 23;
+const MAX_MINUTES: u8 = 59;
+const SECONDS_PER_HOUR: u64 = 3600;
+const SECONDS_PER_MINUTE: u64 = 60;
+
 /// Trait for command handlers
 /// 
 /// Commands implement this trait to handle specific command execution.
@@ -158,6 +164,39 @@ impl CommandRegistry {
         }
     }
     
+    /// Builds a command group from handler keys
+    /// 
+    /// # Arguments
+    /// * `handlers` - Reference to the handlers map
+    /// * `primary_key` - Primary command name (e.g., "help")
+    /// * `alias_key` - Alias command name (e.g., "h")
+    /// * `description` - Description of the command
+    /// 
+    /// # Returns
+    /// * `Some((aliases, description))` - If any aliases are found
+    /// * `None` - If no aliases are found
+    fn build_command_group(
+        handlers: &HashMap<String, Box<dyn CommandHandler>>,
+        primary_key: &str,
+        alias_key: &str,
+        description: &str,
+    ) -> Option<(Vec<String>, String)> {
+        let mut aliases = Vec::new();
+        if handlers.contains_key(primary_key) {
+            aliases.push(format!("!{}", primary_key));
+        }
+        if handlers.contains_key(alias_key) {
+            aliases.push(format!("!{}", alias_key));
+        }
+        
+        if aliases.is_empty() {
+            None
+        } else {
+            aliases.sort();
+            Some((aliases, description.to_string()))
+        }
+    }
+    
     /// Gets command groups with aliases and descriptions
     /// 
     /// Groups commands by their handler type and returns information about
@@ -166,50 +205,39 @@ impl CommandRegistry {
     /// # Returns
     /// A vector of tuples: (aliases, description)
     pub fn get_command_groups(&self) -> Vec<(Vec<String>, String)> {
-        // Manually define command groups based on known aliases
-        // This is simpler than trying to use TypeId with trait objects
         let mut groups: Vec<(Vec<String>, String)> = Vec::new();
         
         // Help command group
-        let mut help_aliases = Vec::new();
-        if self.handlers.contains_key("help") {
-            help_aliases.push("!help".to_string());
-        }
-        if self.handlers.contains_key("h") {
-            help_aliases.push("!h".to_string());
-        }
-        if !help_aliases.is_empty() {
-            help_aliases.sort();
-            groups.push((help_aliases, "Lists all available commands.".to_string()));
+        if let Some(group) = Self::build_command_group(
+            &self.handlers,
+            "help",
+            "h",
+            "Lists all available commands.",
+        ) {
+            groups.push(group);
         }
         
         // Status command group (only if server_query feature is enabled)
         #[cfg(feature = "server_query")]
         {
-            let mut status_aliases = Vec::new();
-            if self.handlers.contains_key("status") {
-                status_aliases.push("!status".to_string());
-            }
-            if self.handlers.contains_key("s") {
-                status_aliases.push("!s".to_string());
-            }
-            if !status_aliases.is_empty() {
-                status_aliases.sort();
-                groups.push((status_aliases, "Shows server status. Use 'f' or 'full' argument to see player list with play times.".to_string()));
+            if let Some(group) = Self::build_command_group(
+                &self.handlers,
+                "status",
+                "s",
+                "Shows server status. Use 'f' or 'full' argument to see player list with play times.",
+            ) {
+                groups.push(group);
             }
         }
         
         // Plan command group
-        let mut plan_aliases = Vec::new();
-        if self.handlers.contains_key("plan") {
-            plan_aliases.push("!plan".to_string());
-        }
-        if self.handlers.contains_key("p") {
-            plan_aliases.push("!p".to_string());
-        }
-        if !plan_aliases.is_empty() {
-            plan_aliases.sort();
-            groups.push((plan_aliases, "Converts time to Unix timestamp. Formats: 19:00, 18.30, or 16 (CET/CEST)".to_string()));
+        if let Some(group) = Self::build_command_group(
+            &self.handlers,
+            "plan",
+            "p",
+            "Converts time to Unix timestamp. Formats: 19:00, 18.30, or 16 (CET/CEST)",
+        ) {
+            groups.push(group);
         }
         
         // Sort groups by first alias
@@ -251,6 +279,44 @@ impl CommandHandler for TestCommand {
 struct StatusCommand;
 
 #[cfg(feature = "server_query")]
+impl StatusCommand {
+    /// Formats server status as a summary (without player list)
+    fn format_summary_status(server_info: &crate::LiveServerInfo::L4D2ServerInfo) -> String {
+        format!(
+            "Server: {}\nMap: {}\nPlayers: {}/{} (Bots: {})",
+            server_info.name,
+            server_info.map,
+            server_info.players,
+            server_info.maxplayers,
+            server_info.bots
+        )
+    }
+    
+    /// Formats server status with full player list
+    fn format_full_status(server_info: &crate::LiveServerInfo::L4D2ServerInfo) -> String {
+        let mut response = format!(
+            "Server: {}\nMap: {}\nPlayers: {}/{} (Bots: {})\n",
+            server_info.name,
+            server_info.map,
+            server_info.players,
+            server_info.maxplayers,
+            server_info.bots
+        );
+        
+        if !server_info.playerdetails.is_empty() {
+            for player in &server_info.playerdetails {
+                let duration_str = format_duration(player.duration);
+                response.push_str(&format!("  • {} ({})\n", player.name, duration_str));
+            }
+            // Remove trailing newline
+            response.pop();
+        }
+        
+        response
+    }
+}
+
+#[cfg(feature = "server_query")]
 impl CommandHandler for StatusCommand {
     fn execute(&self, _args: &str, _message: &EnhancedGroupChatMessage) -> String {
         // Synchronous execution not supported for status command
@@ -281,37 +347,9 @@ impl CommandHandler for StatusCommand {
             match LiveServerInfo::query_server_with_retry(&server_ip, server_port).await {
                 Ok(server_info) => {
                     if is_full {
-                        // Format the response with player list
-                        let mut response = format!(
-                            "Server: {}\nMap: {}\nPlayers: {}/{} (Bots: {})\n",
-                            server_info.name,
-                            server_info.map,
-                            server_info.players,
-                            server_info.maxplayers,
-                            server_info.bots
-                        );
-                        
-                        if !server_info.playerdetails.is_empty() {
-                            // response.push_str("Players:\n");
-                            for player in &server_info.playerdetails {
-                                let duration_str = format_duration(player.duration);
-                                response.push_str(&format!("  • {} ({})\n", player.name, duration_str));
-                            }
-                            // Remove trailing newline
-                            response.pop();
-                        }
-                        
-                        response
+                        Self::format_full_status(&server_info)
                     } else {
-                        // Format the response as a summary
-                        format!(
-                            "Server: {}\nMap: {}\nPlayers: {}/{} (Bots: {})",
-                            server_info.name,
-                            server_info.map,
-                            server_info.players,
-                            server_info.maxplayers,
-                            server_info.bots
-                        )
+                        Self::format_summary_status(&server_info)
                     }
                 }
                 Err(_) => {
@@ -328,8 +366,9 @@ impl CommandHandler for StatusCommand {
 /// Lists all available commands (excluding test command) with aliases and descriptions.
 struct HelpCommand;
 
-impl CommandHandler for HelpCommand {
-    fn execute(&self, _args: &str, _message: &EnhancedGroupChatMessage) -> String {
+impl HelpCommand {
+    /// Internal implementation of the help command logic
+    fn execute_help() -> String {
         let registry = CommandRegistry::new();
         let groups = registry.get_command_groups();
         
@@ -346,29 +385,20 @@ impl CommandHandler for HelpCommand {
             response
         }
     }
+}
+
+impl CommandHandler for HelpCommand {
+    fn execute(&self, _args: &str, _message: &EnhancedGroupChatMessage) -> String {
+        Self::execute_help()
+    }
     
     fn execute_async_owned(
         &self,
         _args: String,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
         // Help command is synchronous, so we just return the result immediately
-        Box::pin(async move {
-            let registry = CommandRegistry::new();
-            let groups = registry.get_command_groups();
-            
-            if groups.is_empty() {
-                "No commands available.".to_string()
-            } else {
-                let mut response = "Available commands:\n".to_string();
-                for (aliases, description) in groups {
-                    // Join aliases with commas
-                    let aliases_str = aliases.join(", ");
-                    response.push_str(&format!("  {}\n    {}\n", aliases_str, description));
-                }
-                response.pop(); // Remove trailing newline
-                response
-            }
-        })
+        let result = Self::execute_help();
+        Box::pin(async move { result })
     }
 }
 
@@ -381,9 +411,9 @@ impl CommandHandler for HelpCommand {
 /// Formatted string like "5m 30s" or "1h 15m" or "45s"
 fn format_duration(seconds: f32) -> String {
     let total_seconds = seconds as u64;
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let secs = total_seconds % 60;
+    let hours = total_seconds / SECONDS_PER_HOUR;
+    let minutes = (total_seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
+    let secs = total_seconds % SECONDS_PER_MINUTE;
     
     if hours > 0 {
         format!("{}h {}m", hours, minutes)
@@ -392,6 +422,107 @@ fn format_duration(seconds: f32) -> String {
     } else {
         format!("{}s", secs)
     }
+}
+
+/// Validates hours and minutes are within valid ranges
+/// 
+/// # Arguments
+/// * `hours` - Hours to validate
+/// * `minutes` - Minutes to validate
+/// 
+/// # Returns
+/// * `Ok(())` - If validation passes
+/// * `Err(String)` - Error message if validation fails
+fn validate_time_components(hours: u8, minutes: u8) -> Result<(), String> {
+    if hours > MAX_HOURS {
+        return Err(format!("Hours must be between 0 and {}", MAX_HOURS));
+    }
+    if minutes > MAX_MINUTES {
+        return Err(format!("Minutes must be between 0 and {}", MAX_MINUTES));
+    }
+    Ok(())
+}
+
+/// Parses time string in colon format (HH:MM)
+/// 
+/// # Arguments
+/// * `trimmed` - The trimmed time string
+/// 
+/// # Returns
+/// * `Ok(Some((hours, minutes)))` - If colon format is found and parsed successfully
+/// * `Ok(None)` - If colon format is not found
+/// * `Err(String)` - If parsing fails
+fn parse_colon_format(trimmed: &str) -> Result<Option<(u8, u8)>, String> {
+    let colon_pos = match trimmed.find(':') {
+        Some(pos) => pos,
+        None => return Ok(None),
+    };
+    
+    let hours_str = &trimmed[..colon_pos];
+    let after_colon = &trimmed[colon_pos + 1..];
+    // Take only the first two parts (HH:MM), ignore seconds if present
+    let minutes_str = if let Some(second_colon_pos) = after_colon.find(':') {
+        &after_colon[..second_colon_pos]
+    } else {
+        after_colon
+    };
+    
+    let hours: u8 = hours_str.parse()
+        .map_err(|_| format!("Invalid hours: {}", hours_str))?;
+    let minutes: u8 = minutes_str.parse()
+        .map_err(|_| format!("Invalid minutes: {}", minutes_str))?;
+    
+    validate_time_components(hours, minutes)?;
+    Ok(Some((hours, minutes)))
+}
+
+/// Parses time string in dot format (HH.MM)
+/// 
+/// # Arguments
+/// * `trimmed` - The trimmed time string
+/// 
+/// # Returns
+/// * `Ok(Some((hours, minutes)))` - If dot format is found and parsed successfully
+/// * `Ok(None)` - If dot format is not found
+/// * `Err(String)` - If parsing fails
+fn parse_dot_format(trimmed: &str) -> Result<Option<(u8, u8)>, String> {
+    let dot_pos = match trimmed.find('.') {
+        Some(pos) => pos,
+        None => return Ok(None),
+    };
+    
+    let hours_str = &trimmed[..dot_pos];
+    let after_dot = &trimmed[dot_pos + 1..];
+    // Take only the first two parts (HH.MM), ignore seconds if present
+    let minutes_str = if let Some(second_dot_pos) = after_dot.find('.') {
+        &after_dot[..second_dot_pos]
+    } else {
+        after_dot
+    };
+    
+    let hours: u8 = hours_str.parse()
+        .map_err(|_| format!("Invalid hours: {}", hours_str))?;
+    let minutes: u8 = minutes_str.parse()
+        .map_err(|_| format!("Invalid minutes: {}", minutes_str))?;
+    
+    validate_time_components(hours, minutes)?;
+    Ok(Some((hours, minutes)))
+}
+
+/// Parses time string in hour-only format (HH)
+/// 
+/// # Arguments
+/// * `trimmed` - The trimmed time string
+/// 
+/// # Returns
+/// * `Ok((hours, 0))` - If hour-only format is parsed successfully
+/// * `Err(String)` - If parsing fails
+fn parse_hour_only(trimmed: &str) -> Result<(u8, u8), String> {
+    let hours: u8 = trimmed.parse()
+        .map_err(|_| format!("Invalid time format. Use HH:MM, HH.MM, or HH (e.g., 19:00, 18.30, or 16)"))?;
+    
+    validate_time_components(hours, 0)?;
+    Ok((hours, 0))
 }
 
 /// Parses a time string in multiple formats (HH:MM, HH.MM, or HH)
@@ -415,68 +546,17 @@ fn parse_time_string(time_str: &str) -> Result<(u8, u8), String> {
     }
     
     // Try colon format (HH:MM)
-    // Note: If seconds are provided (HH:MM:SS), we ignore them and only use HH:MM
-    if let Some(colon_pos) = trimmed.find(':') {
-        let hours_str = &trimmed[..colon_pos];
-        // Take only the first two parts (HH:MM), ignore seconds if present
-        let after_colon = &trimmed[colon_pos + 1..];
-        let minutes_str = if let Some(second_colon_pos) = after_colon.find(':') {
-            &after_colon[..second_colon_pos]
-        } else {
-            after_colon
-        };
-        
-        let hours: u8 = hours_str.parse()
-            .map_err(|_| format!("Invalid hours: {}", hours_str))?;
-        let minutes: u8 = minutes_str.parse()
-            .map_err(|_| format!("Invalid minutes: {}", minutes_str))?;
-        
-        if hours > 23 {
-            return Err("Hours must be between 0 and 23".to_string());
-        }
-        if minutes > 59 {
-            return Err("Minutes must be between 0 and 59".to_string());
-        }
-        
-        return Ok((hours, minutes));
+    if let Some(result) = parse_colon_format(trimmed)? {
+        return Ok(result);
     }
     
     // Try dot format (HH.MM)
-    // Note: If additional dots are provided (HH.MM.SS), we ignore them and only use HH.MM
-    if let Some(dot_pos) = trimmed.find('.') {
-        let hours_str = &trimmed[..dot_pos];
-        // Take only the first two parts (HH.MM), ignore seconds if present
-        let after_dot = &trimmed[dot_pos + 1..];
-        let minutes_str = if let Some(second_dot_pos) = after_dot.find('.') {
-            &after_dot[..second_dot_pos]
-        } else {
-            after_dot
-        };
-        
-        let hours: u8 = hours_str.parse()
-            .map_err(|_| format!("Invalid hours: {}", hours_str))?;
-        let minutes: u8 = minutes_str.parse()
-            .map_err(|_| format!("Invalid minutes: {}", minutes_str))?;
-        
-        if hours > 23 {
-            return Err("Hours must be between 0 and 23".to_string());
-        }
-        if minutes > 59 {
-            return Err("Minutes must be between 0 and 59".to_string());
-        }
-        
-        return Ok((hours, minutes));
+    if let Some(result) = parse_dot_format(trimmed)? {
+        return Ok(result);
     }
     
     // Try hour-only format (HH)
-    let hours: u8 = trimmed.parse()
-        .map_err(|_| format!("Invalid time format. Use HH:MM, HH.MM, or HH (e.g., 19:00, 18.30, or 16)"))?;
-    
-    if hours > 23 {
-        return Err("Hours must be between 0 and 23".to_string());
-    }
-    
-    Ok((hours, 0))
+    parse_hour_only(trimmed)
 }
 
 /// Converts Unix timestamp to CET/CEST time format (HH:MM)

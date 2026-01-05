@@ -198,63 +198,62 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
     // Parse command and arguments
     let (command, args) = parse_command(&command_text);
     
-    // Handle command (try async first, fall back to sync)
-    let registry = CommandRegistry::new();
+    // Check if command exists
+    let command_lower = command.to_lowercase();
     
-    // Check if command supports async execution
+    // We want to handle all commands asynchronously to not block the listener
     let chat_group_id = message.chat_group_id;
     let chat_id = message.chat_id;
-    
-    if let Some(async_future) = registry.handle_async(&command, &args, message) {
-        // Spawn async task to handle the command and send response
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => {
-                let command_lower = command.to_lowercase();
-                let needs_placeholder = command_lower == "status" || command_lower == "s";
+    let message_cloned = message.clone();
+    let args_cloned = args.clone();
+    let command_cloned = command.clone();
+
+    // Spawn async task to handle the command and send response
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            let needs_placeholder = command_lower == "status" || command_lower == "s";
+            
+            handle.spawn(async move {
+                // Send placeholder message only for commands that need it (like !status)
+                let placeholder_preprocessed = if needs_placeholder {
+                    match MessageSender::send_to_chat_global_with_preprocessed("Querying server...", chat_group_id, chat_id).await {
+                        Ok(preprocessed) => Some(preprocessed),
+                        Err(e) => {
+                            eprintln!("Failed to send placeholder message: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
                 
-                handle.spawn(async move {
-                    // Send placeholder message only for commands that need it (like !status)
-                    let placeholder_preprocessed = if needs_placeholder {
-                        match MessageSender::send_to_chat_global_with_preprocessed("Querying server...", chat_group_id, chat_id).await {
-                            Ok(preprocessed) => Some(preprocessed),
-                            Err(e) => {
-                                eprintln!("Failed to send placeholder message: {}", e);
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    };
-                    
-                    // Execute the async command
-                    let response = async_future.await;
-                    
-                    // Send the actual response
-                    if let Err(e) = MessageSender::send_to_chat_global(&response, chat_group_id, chat_id).await {
-                        eprintln!("Failed to send command response: {}", e);
+                // Execute the command via registry
+                let registry = CommandRegistry::new();
+                let response = match registry.handle(&command_cloned, &args_cloned, &message_cloned).await {
+                    Ok(Some(res)) => res,
+                    Ok(None) => return, // Command not found, should probably not happen if we checked before
+                    Err(e) => e.to_string(), // Use the user-friendly error message
+                };
+                
+                // Send the actual response
+                if let Err(e) = MessageSender::send_to_chat_global(&response, chat_group_id, chat_id).await {
+                    eprintln!("Failed to send command response: {}", e);
+                }
+                
+                // Delete the placeholder message if we have its PreprocessedMessage
+                if let Some(preprocessed) = placeholder_preprocessed {
+                    if let Err(e) = MessageSender::delete_message_global(chat_group_id, chat_id, preprocessed).await {
+                        eprintln!("Failed to delete placeholder message: {}", e);
                     }
-                    
-                    // Delete the placeholder message if we have its PreprocessedMessage
-                    // The PreprocessedMessage contains both ordinal and server_timestamp required for deletion
-                    if let Some(preprocessed) = placeholder_preprocessed {
-                        if let Err(e) = MessageSender::delete_message_global(chat_group_id, chat_id, preprocessed).await {
-                            eprintln!("Failed to delete placeholder message: {}", e);
-                            // Don't fail the command if deletion fails
-                        }
-                    }
-                });
-                // Return None since the async task handles sending the response
-                return None;
-            }
-            Err(e) => {
-                eprintln!("Failed to get runtime handle for async command: {}", e);
-                // Fall through to sync execution
-            }
+                }
+            });
+        }
+        Err(e) => {
+            eprintln!("Failed to get runtime handle for command execution: {}", e);
         }
     }
-    
-    // Fall back to synchronous execution
-    registry.handle(&command, &args, message)
+
+    None
 }
 
 /// Extracts command text from message (text after "!")

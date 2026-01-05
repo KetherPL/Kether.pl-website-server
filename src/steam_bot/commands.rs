@@ -7,6 +7,7 @@ use SC_Sub_Poster::EnhancedGroupChatMessage;
 use std::collections::HashMap;
 use chrono::{NaiveDateTime, NaiveTime, TimeZone};
 use chrono_tz::Europe::Warsaw;
+use async_trait::async_trait;
 
 // Constants for time validation and formatting
 const MAX_HOURS: u8 = 23;
@@ -14,66 +15,159 @@ const MAX_MINUTES: u8 = 59;
 const SECONDS_PER_HOUR: u64 = 3600;
 const SECONDS_PER_MINUTE: u64 = 60;
 
+/// Command execution context
+/// 
+/// Provides all necessary information for command execution including
+/// the original message, parsed arguments, and chat identifiers.
+#[derive(Clone)]
+pub struct CommandContext<'a> {
+    /// Command arguments (everything after the command name)
+    pub args: &'a str,
+    /// Original message that triggered the command
+    pub message: &'a EnhancedGroupChatMessage,
+    /// Steam ID of the message sender
+    pub sender_id: u64,
+    /// Chat ID where the message was sent
+    pub chat_id: u64,
+    /// Chat group ID where the message was sent
+    pub chat_group_id: u64,
+}
+
+impl<'a> CommandContext<'a> {
+    /// Creates a new command context from a message and arguments
+    pub fn new(args: &'a str, message: &'a EnhancedGroupChatMessage) -> Self {
+        Self {
+            args,
+            message,
+            sender_id: u64::from(message.sender_steam_id),
+            chat_id: message.chat_id,
+            chat_group_id: message.chat_group_id,
+        }
+    }
+}
+
+/// Command execution errors
+/// 
+/// Structured error types for command execution failures.
+/// Error messages are designed to be user-friendly and can be sent directly to chat.
+#[derive(Debug)]
+pub enum CommandError {
+    /// Invalid command arguments with detailed error message
+    InvalidArguments(String),
+    /// Server query or communication error
+    ServerError(String),
+    /// Configuration error
+    ConfigError(String),
+    /// Command not yet implemented
+    NotImplemented,
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandError::InvalidArguments(msg) => write!(f, "{}", msg),
+            CommandError::ServerError(msg) => write!(f, "{}", msg),
+            CommandError::ConfigError(msg) => write!(f, "{}", msg),
+            CommandError::NotImplemented => write!(f, "Command not implemented"),
+        }
+    }
+}
+
+impl std::error::Error for CommandError {}
+
+/// Trait for parsing command arguments
+/// 
+/// Implement this trait for command-specific argument types to enable
+/// type-safe argument parsing with validation.
+pub trait CommandArgs: Sized {
+    /// Parses arguments from a string
+    /// 
+    /// # Arguments
+    /// * `args` - The argument string to parse
+    /// 
+    /// # Returns
+    /// * `Ok(Self)` - Successfully parsed arguments
+    /// * `Err(CommandError)` - Parsing or validation error
+    fn parse(args: &str) -> Result<Self, CommandError>;
+}
+
+/// Command metadata
+/// 
+/// Contains static information about a command including its name,
+/// aliases, description, and usage examples.
+#[derive(Debug, Clone)]
+pub struct CommandMetadata {
+    /// Primary command name (e.g., "help")
+    pub name: &'static str,
+    /// Command aliases (e.g., ["h"])
+    pub aliases: &'static [&'static str],
+    /// Short description of what the command does
+    pub description: &'static str,
+    /// Optional usage examples (e.g., "!plan <time> | !plan clear")
+    pub usage: Option<&'static str>,
+}
+
 /// Trait for command handlers
 /// 
 /// Commands implement this trait to handle specific command execution.
+/// All commands use async execution for consistency.
+#[async_trait]
 pub trait CommandHandler: Send + Sync {
-    /// Executes the command with the given arguments
+    /// Executes the command with the given context
     /// 
     /// # Arguments
-    /// * `args` - The command arguments (everything after the command name)
-    /// * `message` - The original message that triggered the command
+    /// * `ctx` - The command execution context
     /// 
     /// # Returns
-    /// The response message to send back to the chat
-    fn execute(&self, args: &str, message: &EnhancedGroupChatMessage) -> String;
+    /// * `Ok(String)` - The response message to send back to the chat
+    /// * `Err(CommandError)` - An error that occurred during execution
+    async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError>;
     
-    /// Executes the command asynchronously (optional, for async commands)
-    /// 
-    /// By default, this calls the synchronous `execute()` method.
-    /// Commands that need async operations should override this method.
-    /// 
-    /// # Arguments
-    /// * `args` - The command arguments (everything after the command name) - owned String
-    /// * `message` - The original message that triggered the command
+    /// Returns the command's metadata
     /// 
     /// # Returns
-    /// A future that resolves to the response message
-    #[allow(dead_code)]
-    #[allow(unused_variables)]
-    fn execute_async<'a>(
-        &'a self,
-        args: &'a str,
-        message: &'a EnhancedGroupChatMessage,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>> {
-        let args_owned = args.to_string();
-        Box::pin(async move {
-            // Create a dummy message for the default implementation
-            // Commands should override execute_async_owned instead
-            "Command not implemented".to_string()
-        })
-    }
-    
-    /// Executes the command asynchronously with owned data (for 'static futures)
-    /// 
-    /// By default, this returns a "not implemented" message.
-    /// Commands that need async operations should override this method.
-    /// 
-    /// # Arguments
-    /// * `_args` - The command arguments as an owned String
-    /// 
-    /// # Returns
-    /// A 'static future that resolves to the response message
-    fn execute_async_owned(
-        &self,
-        _args: String,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
-        Box::pin(async move {
-            // Default implementation - commands should override this
-            "Command not implemented".to_string()
-        })
+    /// A reference to the command's metadata
+    fn metadata(&self) -> &CommandMetadata;
+}
+
+/// Command factory function type
+/// 
+/// Creates a new instance of a command handler.
+type CommandFactory = fn() -> Box<dyn CommandHandler>;
+
+/// Command registration information for inventory
+/// 
+/// This struct is used with the inventory crate to enable compile-time
+/// command registration. Commands submit their info using `inventory::submit!`.
+pub struct CommandInfo {
+    /// Command metadata
+    pub metadata: CommandMetadata,
+    /// Factory function to create command instances
+    pub factory: CommandFactory,
+}
+
+impl CommandInfo {
+    /// Creates a new command info for registration
+    pub const fn new(
+        name: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        usage: Option<&'static str>,
+        factory: CommandFactory,
+    ) -> Self {
+        Self {
+            metadata: CommandMetadata {
+                name,
+                aliases,
+                description,
+                usage,
+            },
+            factory,
+        }
     }
 }
+
+inventory::collect!(CommandInfo);
 
 /// Registry for command handlers
 /// 
@@ -83,39 +177,22 @@ pub struct CommandRegistry {
 }
 
 impl CommandRegistry {
-    /// Creates a new command registry with all registered commands
+    /// Creates a new command registry with all registered commands from inventory
     pub fn new() -> Self {
-        let mut registry = Self {
-            handlers: HashMap::new(),
-        };
+        let mut handlers = HashMap::new();
         
-        // Register the test command
-        registry.register("test", Box::new(TestCommand));
+        // Register commands from inventory
+        for info in inventory::iter::<CommandInfo> {
+            // Register primary name
+            handlers.insert(info.metadata.name.to_lowercase(), (info.factory)());
+            
+            // Register aliases
+            for &alias in info.metadata.aliases {
+                handlers.insert(alias.to_lowercase(), (info.factory)());
+            }
+        }
         
-        // Register the status command (only if server_query feature is enabled)
-        #[cfg(feature = "server_query")]
-        registry.register("s", Box::new(StatusCommand));
-        #[cfg(feature = "server_query")]
-        registry.register("status", Box::new(StatusCommand));
-        
-        // Register the help command
-        registry.register("h", Box::new(HelpCommand));
-        registry.register("help", Box::new(HelpCommand));
-        
-        // Register the plan command
-        registry.register("p", Box::new(PlanCommand));
-        registry.register("plan", Box::new(PlanCommand));
-        
-        registry
-    }
-    
-    /// Registers a command handler
-    /// 
-    /// # Arguments
-    /// * `name` - The command name (case-insensitive)
-    /// * `handler` - The command handler implementation
-    fn register(&mut self, name: &str, handler: Box<dyn CommandHandler>) {
-        self.handlers.insert(name.to_lowercase(), handler);
+        Self { handlers }
     }
     
     /// Handles a command execution
@@ -126,135 +203,54 @@ impl CommandRegistry {
     /// * `message` - The original message
     /// 
     /// # Returns
-    /// * `Some(String)` - The response message if command is found
-    /// * `None` - If command is not found
-    pub fn handle(&self, command: &str, args: &str, message: &EnhancedGroupChatMessage) -> Option<String> {
+    /// * `Ok(Some(String))` - The response message if command is found and successful
+    /// * `Ok(None)` - If command is not found
+    /// * `Err(CommandError)` - If command execution fails
+    pub async fn handle(&self, command: &str, args: &str, message: &EnhancedGroupChatMessage) -> Result<Option<String>, CommandError> {
         let command_lower = command.to_lowercase();
         if let Some(handler) = self.handlers.get(&command_lower) {
-            Some(handler.execute(args, message))
+            let ctx = CommandContext::new(args, message);
+            Ok(Some(handler.execute(&ctx).await?))
         } else {
-            None
-        }
-    }
-    
-    /// Handles a command execution asynchronously
-    /// 
-    /// # Arguments
-    /// * `command` - The command name (case-insensitive)
-    /// * `args` - The command arguments (will be cloned for async execution)
-    /// * `message` - The original message (chat IDs will be extracted)
-    /// 
-    /// # Returns
-    /// * `Some(Future<String>)` - A future that resolves to the response message if command is found
-    /// * `None` - If command is not found
-    pub fn handle_async(
-        &self,
-        command: &str,
-        args: &str,
-        _message: &EnhancedGroupChatMessage,
-    ) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>> {
-        let command_lower = command.to_lowercase();
-        if let Some(handler) = self.handlers.get(&command_lower) {
-            // Clone the args to own them for the future
-            let args_owned = args.to_string();
-            // Create a static future by cloning what we need
-            Some(Box::pin(handler.execute_async_owned(args_owned)))
-        } else {
-            None
-        }
-    }
-    
-    /// Builds a command group from handler keys
-    /// 
-    /// # Arguments
-    /// * `handlers` - Reference to the handlers map
-    /// * `primary_key` - Primary command name (e.g., "help")
-    /// * `alias_key` - Alias command name (e.g., "h")
-    /// * `description` - Description of the command
-    /// 
-    /// # Returns
-    /// * `Some((aliases, description))` - If any aliases are found
-    /// * `None` - If no aliases are found
-    fn build_command_group(
-        handlers: &HashMap<String, Box<dyn CommandHandler>>,
-        primary_key: &str,
-        alias_key: &str,
-        description: &str,
-    ) -> Option<(Vec<String>, String)> {
-        let mut aliases = Vec::new();
-        if handlers.contains_key(primary_key) {
-            aliases.push(format!("!{}", primary_key));
-        }
-        if handlers.contains_key(alias_key) {
-            aliases.push(format!("!{}", alias_key));
-        }
-        
-        if aliases.is_empty() {
-            None
-        } else {
-            aliases.sort();
-            Some((aliases, description.to_string()))
+            Ok(None)
         }
     }
     
     /// Gets command groups with aliases and descriptions
     /// 
-    /// Groups commands by their handler type and returns information about
-    /// each command group including aliases and usage.
-    /// 
-    /// # Returns
-    /// A vector of tuples: (aliases, description)
+    /// Groups commands by their primary name and returns information about
+    /// each command including aliases and description.
     pub fn get_command_groups(&self) -> Vec<(Vec<String>, String)> {
-        let mut groups: Vec<(Vec<String>, String)> = Vec::new();
+        let mut groups: HashMap<String, (Vec<String>, String)> = HashMap::new();
         
-        // Help command group
-        if let Some(group) = Self::build_command_group(
-            &self.handlers,
-            "help",
-            "h",
-            "Lists all available commands.",
-        ) {
-            groups.push(group);
-        }
-        
-        // Status command group (only if server_query feature is enabled)
-        #[cfg(feature = "server_query")]
-        {
-            if let Some(group) = Self::build_command_group(
-                &self.handlers,
-                "status",
-                "s",
-                "Shows server status. Use 'f' or 'full' argument to see player list with play times.",
-            ) {
-                groups.push(group);
+        // Use a set of primary names to avoid processing aliases twice
+        for info in inventory::iter::<CommandInfo> {
+            let metadata = &info.metadata;
+            let mut aliases = vec![format!("!{}", metadata.name)];
+            for &alias in metadata.aliases {
+                aliases.push(format!("!{}", alias));
             }
+            aliases.sort();
+            
+            groups.insert(metadata.name.to_string(), (aliases, metadata.description.to_string()));
         }
         
-        // Plan command group
-        if let Some(group) = Self::build_command_group(
-            &self.handlers,
-            "plan",
-            "p",
-            "Converts time to Unix timestamp. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-        ) {
-            groups.push(group);
-        }
-        
-        // Sort groups by first alias
-        groups.sort_by(|a, b| a.0[0].cmp(&b.0[0]));
-        groups
+        let mut result: Vec<(Vec<String>, String)> = groups.into_values().collect();
+        result.sort_by(|a, b| a.0[0].cmp(&b.0[0]));
+        result
     }
     
     /// Gets a list of all registered command names (excluding test command)
-    /// 
-    /// # Returns
-    /// A vector of command names, sorted alphabetically
     pub fn get_command_names(&self) -> Vec<String> {
-        let mut commands: Vec<String> = self.handlers
-            .keys()
-            .filter(|name| name != &"test") // Exclude test command
-            .cloned()
-            .collect();
+        let mut commands: Vec<String> = Vec::new();
+        for info in inventory::iter::<CommandInfo> {
+            if info.metadata.name != "test" {
+                commands.push(info.metadata.name.to_string());
+                for &alias in info.metadata.aliases {
+                    commands.push(alias.to_string());
+                }
+            }
+        }
         commands.sort();
         commands
     }
@@ -265,10 +261,84 @@ impl CommandRegistry {
 /// Responds with "Test successful!" when executed.
 struct TestCommand;
 
+#[async_trait]
 impl CommandHandler for TestCommand {
-    fn execute(&self, _args: &str, _message: &EnhancedGroupChatMessage) -> String {
-        "Test successful!".to_string()
+    async fn execute(&self, _ctx: &CommandContext<'_>) -> Result<String, CommandError> {
+        Ok("Test successful!".to_string())
     }
+    
+    fn metadata(&self) -> &CommandMetadata {
+        static METADATA: CommandMetadata = CommandMetadata {
+            name: "test",
+            aliases: &[],
+            description: "Test command",
+            usage: None,
+        };
+        &METADATA
+    }
+}
+
+inventory::submit! {
+    CommandInfo::new(
+        "test",
+        &[],
+        "Test command",
+        None,
+        || Box::new(TestCommand)
+    )
+}
+
+/// Help command handler
+/// 
+/// Lists all available commands (excluding test command) with aliases and descriptions.
+struct HelpCommand;
+
+impl HelpCommand {
+    /// Internal implementation of the help command logic
+    fn execute_help() -> String {
+        let registry = CommandRegistry::new();
+        let groups = registry.get_command_groups();
+        
+        if groups.is_empty() {
+            "No commands available.".to_string()
+        } else {
+            let mut response = "Available commands:\n".to_string();
+            for (aliases, description) in groups {
+                // Join aliases with commas
+                let aliases_str = aliases.join(", ");
+                response.push_str(&format!("  {}\n    {}\n", aliases_str, description));
+            }
+            response.pop(); // Remove trailing newline
+            response
+        }
+    }
+}
+
+#[async_trait]
+impl CommandHandler for HelpCommand {
+    async fn execute(&self, _ctx: &CommandContext<'_>) -> Result<String, CommandError> {
+        Ok(Self::execute_help())
+    }
+    
+    fn metadata(&self) -> &CommandMetadata {
+        static METADATA: CommandMetadata = CommandMetadata {
+            name: "help",
+            aliases: &["h"],
+            description: "Lists all available commands.",
+            usage: Some("!help | !h"),
+        };
+        &METADATA
+    }
+}
+
+inventory::submit! {
+    CommandInfo::new(
+        "help",
+        &["h"],
+        "Lists all available commands.",
+        Some("!help | !h"),
+        || Box::new(HelpCommand)
+    )
 }
 
 /// Status command handler
@@ -317,89 +387,57 @@ impl StatusCommand {
 }
 
 #[cfg(feature = "server_query")]
+#[async_trait]
 impl CommandHandler for StatusCommand {
-    fn execute(&self, _args: &str, _message: &EnhancedGroupChatMessage) -> String {
-        // Synchronous execution not supported for status command
-        // Use execute_async_owned instead
-        "Server Status: Please wait...".to_string()
-    }
-    
-    fn execute_async_owned(
-        &self,
-        args: String,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
-        Box::pin(async move {
-            // Get server configuration from registry
-            let config = registry::config();
-            let server_ip = config.server_ip().to_string();
-            let server_port = config.server_port();
-            
-            // Check if server is configured
-            if server_ip.is_empty() || server_port == 0 {
-                eprintln!("Server configuration error: IP or port not set");
-                return "Server Status: Configuration error".to_string();
-            }
-            
-            // Check if "full" argument is provided
-            let is_full = args.to_lowercase().trim() == "full" || args.to_lowercase().trim() == "f";
-            
-            // Query the server asynchronously
-            match LiveServerInfo::query_server_with_retry(&server_ip, server_port).await {
-                Ok(server_info) => {
-                    if is_full {
-                        Self::format_full_status(&server_info)
-                    } else {
-                        Self::format_summary_status(&server_info)
-                    }
-                }
-                Err(_) => {
-                    "Server Status: Offline or unavailable".to_string()
-                }
-            }
-        })
-    }
-}
-
-
-/// Help command handler
-/// 
-/// Lists all available commands (excluding test command) with aliases and descriptions.
-struct HelpCommand;
-
-impl HelpCommand {
-    /// Internal implementation of the help command logic
-    fn execute_help() -> String {
-        let registry = CommandRegistry::new();
-        let groups = registry.get_command_groups();
+    async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
+        // Get server configuration from registry
+        let config = registry::config();
+        let server_ip = config.server_ip().to_string();
+        let server_port = config.server_port();
         
-        if groups.is_empty() {
-            "No commands available.".to_string()
-        } else {
-            let mut response = "Available commands:\n".to_string();
-            for (aliases, description) in groups {
-                // Join aliases with commas
-                let aliases_str = aliases.join(", ");
-                response.push_str(&format!("  {}\n    {}\n", aliases_str, description));
+        // Check if server is configured
+        if server_ip.is_empty() || server_port == 0 {
+            return Err(CommandError::ConfigError("Server Status: Configuration error".to_string()));
+        }
+        
+        // Check if "full" argument is provided
+        let is_full = ctx.args.to_lowercase().trim() == "full" || ctx.args.to_lowercase().trim() == "f";
+        
+        // Query the server asynchronously
+        match LiveServerInfo::query_server_with_retry(&server_ip, server_port).await {
+            Ok(server_info) => {
+                if is_full {
+                    Ok(Self::format_full_status(&server_info))
+                } else {
+                    Ok(Self::format_summary_status(&server_info))
+                }
             }
-            response.pop(); // Remove trailing newline
-            response
+            Err(_) => {
+                Err(CommandError::ServerError("Server Status: Offline or unavailable".to_string()))
+            }
         }
     }
+    
+    fn metadata(&self) -> &CommandMetadata {
+        static METADATA: CommandMetadata = CommandMetadata {
+            name: "status",
+            aliases: &["s"],
+            description: "Shows server status.",
+            usage: Some("!status | !s | !status full | !s f"),
+        };
+        &METADATA
+    }
 }
 
-impl CommandHandler for HelpCommand {
-    fn execute(&self, _args: &str, _message: &EnhancedGroupChatMessage) -> String {
-        Self::execute_help()
-    }
-    
-    fn execute_async_owned(
-        &self,
-        _args: String,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
-        // Help command is synchronous, so we just return the result immediately
-        let result = Self::execute_help();
-        Box::pin(async move { result })
-    }
+#[cfg(feature = "server_query")]
+inventory::submit! {
+    CommandInfo::new(
+        "status",
+        &["s"],
+        "Shows server status. Use 'f' or 'full' argument to see player list with play times.",
+        Some("!status | !s | !status full | !s f"),
+        || Box::new(StatusCommand)
+    )
 }
 
 /// Formats duration in seconds to a human-readable string
@@ -630,21 +668,31 @@ fn time_to_unix_timestamp(hours: u8, minutes: u8) -> Result<i64, String> {
 /// Converts a time string to Unix timestamp and outputs it to console and chat.
 struct PlanCommand;
 
+#[async_trait]
 impl CommandHandler for PlanCommand {
-    fn execute(&self, args: &str, _message: &EnhancedGroupChatMessage) -> String {
-        Self::execute_plan(args)
+    async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
+        Ok(Self::execute_plan(ctx.args))
     }
     
-    fn execute_async_owned(
-        &self,
-        args: String,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>> {
-        // Plan command is synchronous, so we just return the result immediately
-        let result = Self::execute_plan(&args);
-        Box::pin(async move {
-            result
-        })
+    fn metadata(&self) -> &CommandMetadata {
+        static METADATA: CommandMetadata = CommandMetadata {
+            name: "plan",
+            aliases: &["p"],
+            description: "Converts time to Unix timestamp. Formats: 19:00, 18.30, or 16 (CET/CEST)",
+            usage: Some("!plan <time> | !plan clear"),
+        };
+        &METADATA
     }
+}
+
+inventory::submit! {
+    CommandInfo::new(
+        "plan",
+        &["p"],
+        "Converts time to Unix timestamp. Formats: 19:00, 18.30, or 16 (CET/CEST)",
+        Some("!plan <time> | !plan clear"),
+        || Box::new(PlanCommand)
+    )
 }
 
 impl PlanCommand {
@@ -708,3 +756,47 @@ impl PlanCommand {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_time_string_colon() {
+        assert_eq!(parse_time_string("19:00").unwrap(), (19, 0));
+        assert_eq!(parse_time_string("08:30").unwrap(), (8, 30));
+        assert_eq!(parse_time_string("0:0").unwrap(), (0, 0));
+        assert_eq!(parse_time_string("23:59").unwrap(), (23, 59));
+    }
+
+    #[test]
+    fn test_parse_time_string_dot() {
+        assert_eq!(parse_time_string("18.30").unwrap(), (18, 30));
+        assert_eq!(parse_time_string("7.45").unwrap(), (7, 45));
+    }
+
+    #[test]
+    fn test_parse_time_string_hour_only() {
+        assert_eq!(parse_time_string("16").unwrap(), (16, 0));
+        assert_eq!(parse_time_string("9").unwrap(), (9, 0));
+    }
+
+    #[test]
+    fn test_parse_time_string_invalid() {
+        assert!(parse_time_string("24:00").is_err());
+        assert!(parse_time_string("12:60").is_err());
+        assert!(parse_time_string("abc").is_err());
+        assert!(parse_time_string("").is_err());
+    }
+
+    #[test]
+    fn test_command_registry_registration() {
+        let registry = CommandRegistry::new();
+        let commands = registry.get_command_groups();
+        
+        // Check if basic commands are present
+        let names: Vec<String> = commands.iter().flat_map(|(aliases, _)| aliases.clone()).collect();
+        assert!(names.contains(&"!help".to_string()) || names.contains(&"!h".to_string()));
+        assert!(names.contains(&"!plan".to_string()) || names.contains(&"!p".to_string()));
+    }
+}

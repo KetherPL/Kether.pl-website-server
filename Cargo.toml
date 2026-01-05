@@ -28,6 +28,8 @@ reedline = "0.44"
 crossterm = "0.28"
 chrono = "0.4"
 chrono-tz = "0.9"
+async-trait = "0.1"
+inventory = "0.3"
 
 # The default release profile. It contains all optimizations, without
 # sacrificing debug info. With this profile (like in the standard

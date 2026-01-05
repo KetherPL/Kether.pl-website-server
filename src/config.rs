@@ -41,6 +41,10 @@ struct SteamConfig {
 	/// Steam chat configuration
 	#[serde(default)]
 	chat: ChatConfig,
+
+	/// Whether commands can be invoked without mentioning the bot
+	#[serde(default)]
+	commands_without_mention: bool,
 }
 
 /// Steam bot credentials
@@ -94,6 +98,7 @@ impl Default for SteamConfig {
 			web_api_key: String::new(),
 			bot: BotConfig::default(),
 			chat: ChatConfig::default(),
+			commands_without_mention: false,
 		}
 	}
 }
@@ -149,6 +154,7 @@ pub struct Config {
 	pub steam_password: String,
 	pub server_ip: String,
 	pub server_port: u16,
+	pub steam_bot_commands_without_mention: bool,
 }
 
 impl Config {
@@ -184,6 +190,7 @@ impl Config {
 			steam_password: config_file.steam.bot.password,
 			server_ip: config_file.server.ip,
 			server_port: config_file.server.port,
+			steam_bot_commands_without_mention: config_file.steam.commands_without_mention,
 		})
 	}
 	
@@ -219,6 +226,10 @@ password = ""
 [steam.chat]
 group_id = 0
 chat_id = 0
+
+# Whether commands can be invoked without mentioning the bot (true/false)
+# If true, simply typing "!plan 19" will work without @mentioning the bot
+commands_without_mention = false
 "#.to_string()
 	}
 	

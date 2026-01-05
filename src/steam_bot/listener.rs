@@ -184,12 +184,29 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
     
     let is_mentioned = is_mentioned_preprocessed || is_mentioned_bbcode;
 
-    if !is_mentioned {
+    // Check configuration for commands without mention
+    let config = registry::config();
+    let allow_without_mention = config.steam_bot_commands_without_mention;
+
+    if !is_mentioned && !allow_without_mention {
         return None;
     }
 
     // Extract command from message
-    let command_text = extract_command(&message.message);
+    // If not mentioned, we only want to process messages that start with "!" (ignoring leading whitespace)
+    let command_text = if !is_mentioned && allow_without_mention {
+        let trimmed = message.message.trim_start();
+        if trimmed.starts_with('!') {
+            // It starts with '!', extract the command part (everything after the first '!')
+            let exclamation_pos = trimmed.find('!').unwrap();
+            let after_exclamation = &trimmed[exclamation_pos + 1..];
+            after_exclamation.trim_start().to_string()
+        } else {
+            return None;
+        }
+    } else {
+        extract_command(&message.message)
+    };
     
     if command_text.is_empty() {
         return None;

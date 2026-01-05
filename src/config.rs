@@ -41,10 +41,6 @@ struct SteamConfig {
 	/// Steam chat configuration
 	#[serde(default)]
 	chat: ChatConfig,
-
-	/// Whether commands can be invoked without mentioning the bot
-	#[serde(default)]
-	commands_without_mention: bool,
 }
 
 /// Steam bot credentials
@@ -67,6 +63,10 @@ struct ChatConfig {
 	
 	#[serde(default)]
 	chat_id: u64,
+
+	/// Whether commands can be invoked without mentioning the bot
+	#[serde(default)]
+	commands_without_mention: bool,
 }
 
 /// L4D2 server configuration
@@ -98,7 +98,6 @@ impl Default for SteamConfig {
 			web_api_key: String::new(),
 			bot: BotConfig::default(),
 			chat: ChatConfig::default(),
-			commands_without_mention: false,
 		}
 	}
 }
@@ -117,6 +116,7 @@ impl Default for ChatConfig {
 		ChatConfig {
 			group_id: 0,
 			chat_id: 0,
+			commands_without_mention: false,
 		}
 	}
 }
@@ -190,7 +190,7 @@ impl Config {
 			steam_password: config_file.steam.bot.password,
 			server_ip: config_file.server.ip,
 			server_port: config_file.server.port,
-			steam_bot_commands_without_mention: config_file.steam.commands_without_mention,
+			steam_bot_commands_without_mention: config_file.steam.chat.commands_without_mention,
 		})
 	}
 	

@@ -678,7 +678,7 @@ impl CommandHandler for PlanCommand {
         static METADATA: CommandMetadata = CommandMetadata {
             name: "plan",
             aliases: &["p"],
-            description: "Converts time to Unix timestamp. Formats: 19:00, 18.30, or 16 (CET/CEST)",
+            description: "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
             usage: Some("!plan <time> | !plan clear"),
         };
         &METADATA
@@ -689,7 +689,7 @@ inventory::submit! {
     CommandInfo::new(
         "plan",
         &["p"],
-        "Converts time to Unix timestamp. Formats: 19:00, 18.30, or 16 (CET/CEST)",
+        "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
         Some("!plan <time> | !plan clear"),
         || Box::new(PlanCommand)
     )
@@ -751,7 +751,7 @@ impl PlanCommand {
         if is_replan {
             format!("Re-planned lobby time: {}", time_str)
         } else {
-            format!("Planned lobby time: {}", time_str)
+            format!("Planned lobby time: {} [mention=all]@all[/mention]", time_str)
         }
     }
 }

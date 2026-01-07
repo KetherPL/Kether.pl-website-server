@@ -28,3 +28,7 @@ password = ""
 [steam.chat]
 group_id = 0
 chat_id = 0
+
+# Whether commands can be invoked without mentioning the bot (true/false)
+# If true, simply typing "!plan 19" will work without @mentioning the bot
+commands_without_mention = false

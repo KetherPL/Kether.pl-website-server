@@ -14,6 +14,10 @@ use tokio::time::Duration;
 /// Retry delay when the listener encounters an error
 const LISTENER_RETRY_DELAY_SECS: u64 = 5;
 
+/// Health check interval for proactive connection monitoring
+/// Matches the interval used in ConnectionManager::ensure_healthy()
+const HEALTH_CHECK_INTERVAL_SECS: u64 = 300; // 5 minutes
+
 /// Starts the message listener task that listens for incoming Steam chat messages
 /// and processes commands when the bot is mentioned.
 /// 
@@ -39,41 +43,96 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
     loop {
         match create_chat_client(&bot).await {
             Some(chat_client) => {
-                match listen_for_messages(chat_client, bot_steam_id).await {
-                    Ok(()) => {
-                        eprintln!("Message listener completed unexpectedly");
-                        break;
+                // Create health check interval - skip the first tick to avoid immediate check
+                let mut health_check_interval = tokio::time::interval(Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS));
+                health_check_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                
+                // Use tokio::select! to run listener and health checks concurrently
+                let should_recreate_client = tokio::select! {
+                    // Listen for messages
+                    result = listen_for_messages(chat_client, bot_steam_id) => {
+                        match result {
+                            Ok(()) => {
+                                eprintln!("Message listener completed unexpectedly");
+                                true // Break the loop
+                            }
+                            Err(e) => {
+                                // Convert error to string immediately to ensure Send
+                                let error_msg = format!("{}", e);
+                                eprintln!("Message listener error: {}", error_msg);
+                                
+                                // Check if this is a connection error and attempt recovery
+                                if is_connection_error(&error_msg) {
+                                    eprintln!("Connection error detected, attempting reconnection...");
+                                    if let Some(config) = registry::config_opt() {
+                                        match ConnectionManager::reconnect(&bot, config).await {
+                                            Ok(()) => {
+                                                println!("Successfully reconnected, retrying listener...");
+                                                // Wait a bit before retrying to ensure connection is stable
+                                                wait_before_retry().await;
+                                                true // Recreate ChatRoomClient with new connection
+                                            }
+                                            Err(reconnect_err) => {
+                                                eprintln!("Failed to reconnect: {}, retrying listener anyway...", reconnect_err);
+                                                wait_before_retry().await;
+                                                true // Recreate ChatRoomClient anyway
+                                            }
+                                        }
+                                    } else {
+                                        eprintln!("Config not available, cannot reconnect. Retrying listener...");
+                                        wait_before_retry().await;
+                                        true // Recreate ChatRoomClient
+                                    }
+                                } else {
+                                    // Not a connection error, just wait and retry
+                                    eprintln!("Non-connection error, retrying...");
+                                    wait_before_retry().await;
+                                    true // Recreate ChatRoomClient
+                                }
+                            }
+                        }
                     }
-                    Err(e) => {
-                        // Convert error to string immediately to ensure Send
-                        let error_msg = format!("{}", e);
-                        eprintln!("Message listener error: {}", error_msg);
-                        
-                        // Check if this is a connection error and attempt recovery
-                        if is_connection_error(&error_msg) {
-                            eprintln!("Connection error detected, attempting reconnection...");
-                            if let Some(config) = registry::config_opt() {
+                    // Periodic health check
+                    _ = health_check_interval.tick() => {
+                        if let Some(config) = registry::config_opt() {
+                            let is_healthy = match ConnectionManager::check_health(&bot).await {
+                                Ok(healthy) => healthy,
+                                Err(e) => {
+                                    let error_msg = format!("{}", e);
+                                    eprintln!("Health check error: {}", error_msg);
+                                    false // Treat error as unhealthy
+                                }
+                            };
+                            
+                            if !is_healthy {
+                                eprintln!("Health check failed, reconnecting...");
                                 match ConnectionManager::reconnect(&bot, config).await {
                                     Ok(()) => {
-                                        println!("Successfully reconnected, retrying listener...");
-                                        // Wait a bit before retrying to ensure connection is stable
-                                        wait_before_retry().await;
+                                        println!("Reconnected after health check failure");
+                                        // Break to recreate ChatRoomClient with new connection
+                                        true
                                     }
                                     Err(reconnect_err) => {
-                                        eprintln!("Failed to reconnect: {}, retrying listener anyway...", reconnect_err);
-                                        wait_before_retry().await;
+                                        let error_msg = format!("{}", reconnect_err);
+                                        eprintln!("Failed to reconnect after health check: {}", error_msg);
+                                        // Continue with existing client, will retry on next health check
+                                        false
                                     }
                                 }
                             } else {
-                                eprintln!("Config not available, cannot reconnect. Retrying listener...");
-                                wait_before_retry().await;
+                                // Connection is healthy, continue listening
+                                false // Don't recreate ChatRoomClient
                             }
                         } else {
-                            // Not a connection error, just wait and retry
-                            eprintln!("Non-connection error, retrying...");
-                            wait_before_retry().await;
+                            eprintln!("Config not available for health check");
+                            false // Continue with existing client
                         }
                     }
+                };
+                
+                // If we need to recreate the client (due to reconnection or error), break to outer loop
+                if should_recreate_client {
+                    continue; // Continue outer loop to recreate ChatRoomClient
                 }
             }
             None => {
@@ -91,8 +150,6 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
             }
         }
     }
-
-    Ok(())
 }
 
 /// Gets the bot's Steam ID, returning an error if unavailable

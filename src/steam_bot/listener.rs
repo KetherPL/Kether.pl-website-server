@@ -41,6 +41,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
     println!("Message listener started, waiting for messages...");
 
     // Spawn background health check task
+    // Use ensure_healthy() which properly handles connection state and recovery
     let bot_for_health_check = bot.clone();
     tokio::spawn(async move {
         let mut health_check_interval = tokio::time::interval(Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS));
@@ -50,32 +51,36 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
             health_check_interval.tick().await;
             
             if let Some(config) = registry::config_opt() {
-                let is_healthy = match ConnectionManager::check_health(&bot_for_health_check).await {
-                    Ok(healthy) => healthy,
-                    Err(e) => {
-                        let error_msg = format!("{}", e);
-                        eprintln!("Health check error: {}", error_msg);
-                        false // Treat error as unhealthy
-                    }
-                };
-                
-                if !is_healthy {
-                    eprintln!("Health check failed, reconnecting...");
-                    match ConnectionManager::reconnect(&bot_for_health_check, config).await {
-                        Ok(()) => {
-                            println!("Reconnected after health check failure");
-                        }
-                        Err(reconnect_err) => {
-                            let error_msg = format!("{}", reconnect_err);
-                            eprintln!("Failed to reconnect after health check: {}", error_msg);
-                        }
-                    }
+                // Use ensure_healthy() which checks connection state and properly handles recovery
+                // This matches what the call-for-sub bot uses and ensures Failed state is handled
+                if let Err(e) = ConnectionManager::ensure_healthy(&bot_for_health_check, config).await {
+                    eprintln!("Listener health check failed: {}", e);
                 }
             }
         }
     });
 
     loop {
+        // Check connection state - if Failed, try to reconnect before creating client
+        let connection_state = bot.get_connection_state().await;
+        if connection_state == crate::steam_bot::state::ConnectionState::Failed {
+            eprintln!("Connection state is Failed, attempting reconnection...");
+            if let Some(config) = registry::config_opt() {
+                if let Err(e) = ConnectionManager::reconnect(&bot, config).await {
+                    eprintln!("Failed to reconnect from Failed state: {}", e);
+                    wait_before_retry().await;
+                    continue;
+                } else {
+                    println!("Successfully reconnected from Failed state");
+                    wait_before_retry().await; // Brief wait to ensure connection is stable
+                }
+            } else {
+                eprintln!("Config not available, cannot reconnect from Failed state");
+                wait_before_retry().await;
+                continue;
+            }
+        }
+        
         match create_chat_client(&bot).await {
             Some(chat_client) => {
                 match listen_for_messages(chat_client, bot_steam_id).await {

@@ -48,6 +48,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
         health_check_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         
         loop {
+            // Use catch_unwind or handle errors to prevent task from silently stopping
             health_check_interval.tick().await;
             
             if let Some(config) = registry::config_opt() {
@@ -55,7 +56,11 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                 // This matches what the call-for-sub bot uses and ensures Failed state is handled
                 if let Err(e) = ConnectionManager::ensure_healthy(&bot_for_health_check, config).await {
                     eprintln!("Listener health check failed: {}", e);
+                    // Continue loop even on error - don't let health check task die
                 }
+            } else {
+                // Config not available - log and continue (might be temporary)
+                eprintln!("Config not available for health check, will retry on next interval");
             }
         }
     });
@@ -143,16 +148,27 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
             }
             None => {
                 eprintln!("Warning: Steam session not available, message listener cannot start");
-                // If session is not available, try to reconnect if config is available
-                if let Some(config) = registry::config_opt() {
-                    eprintln!("Attempting to reconnect...");
-                    // Use ensure_healthy() to handle reconnection with proper state management
-                    if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
-                        eprintln!("Failed to reconnect: {}", e);
+                // Re-check connection state - might be reconnecting already
+                let connection_state = bot.get_connection_state().await;
+                match connection_state {
+                    crate::steam_bot::state::ConnectionState::Reconnecting => {
+                        // Health check task is already handling reconnection, just wait
+                        eprintln!("Connection is reconnecting, waiting for health check task...");
+                        wait_before_retry().await;
                     }
-                    wait_before_retry().await;
-                } else {
-                    return Ok(());
+                    _ => {
+                        // If session is not available, try to reconnect if config is available
+                        if let Some(config) = registry::config_opt() {
+                            eprintln!("Attempting to reconnect...");
+                            // Use ensure_healthy() to handle reconnection with proper state management
+                            if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                                eprintln!("Failed to reconnect: {}", e);
+                            }
+                            wait_before_retry().await;
+                        } else {
+                            return Ok(());
+                        }
+                    }
                 }
             }
         }

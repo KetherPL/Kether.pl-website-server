@@ -61,23 +61,42 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
     });
 
     loop {
-        // Check connection state - if Failed, try to reconnect before creating client
+        // Check connection state before creating client
         let connection_state = bot.get_connection_state().await;
-        if connection_state == crate::steam_bot::state::ConnectionState::Failed {
-            eprintln!("Connection state is Failed, attempting reconnection...");
-            if let Some(config) = registry::config_opt() {
-                if let Err(e) = ConnectionManager::reconnect(&bot, config).await {
-                    eprintln!("Failed to reconnect from Failed state: {}", e);
-                    wait_before_retry().await;
-                    continue;
-                } else {
-                    println!("Successfully reconnected from Failed state");
-                    wait_before_retry().await; // Brief wait to ensure connection is stable
-                }
-            } else {
-                eprintln!("Config not available, cannot reconnect from Failed state");
+        match connection_state {
+            crate::steam_bot::state::ConnectionState::Reconnecting => {
+                // Wait for reconnection to complete (health check task is handling it)
+                eprintln!("Connection is reconnecting, waiting...");
                 wait_before_retry().await;
                 continue;
+            }
+            crate::steam_bot::state::ConnectionState::Failed => {
+                // Use ensure_healthy() to handle reconnection (avoids double reconnection with health check task)
+                eprintln!("Connection state is Failed, attempting reconnection...");
+                if let Some(config) = registry::config_opt() {
+                    // Use ensure_healthy() which has retry logic and proper state management
+                    if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                        eprintln!("Failed to recover from Failed state: {}", e);
+                        wait_before_retry().await;
+                        continue;
+                    } else {
+                        println!("Successfully recovered from Failed state");
+                        wait_before_retry().await; // Brief wait to ensure connection is stable
+                    }
+                } else {
+                    eprintln!("Config not available, cannot reconnect from Failed state");
+                    wait_before_retry().await;
+                    continue;
+                }
+            }
+            crate::steam_bot::state::ConnectionState::Disconnected | crate::steam_bot::state::ConnectionState::Connecting => {
+                // Wait for connection to be established
+                eprintln!("Connection is not ready (state: {:?}), waiting...", connection_state);
+                wait_before_retry().await;
+                continue;
+            }
+            crate::steam_bot::state::ConnectionState::Connected => {
+                // Connection is ready, proceed to create client
             }
         }
         
@@ -97,7 +116,9 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                         if is_connection_error(&error_msg) {
                             eprintln!("Connection error detected, attempting reconnection...");
                             if let Some(config) = registry::config_opt() {
-                                match ConnectionManager::reconnect(&bot, config).await {
+                                // Use ensure_healthy() to handle reconnection with proper state management
+                                // This avoids race conditions with the health check task
+                                match ConnectionManager::ensure_healthy(&bot, config).await {
                                     Ok(()) => {
                                         println!("Successfully reconnected, retrying listener...");
                                         // Wait a bit before retrying to ensure connection is stable
@@ -125,7 +146,8 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                 // If session is not available, try to reconnect if config is available
                 if let Some(config) = registry::config_opt() {
                     eprintln!("Attempting to reconnect...");
-                    if let Err(e) = ConnectionManager::reconnect(&bot, config).await {
+                    // Use ensure_healthy() to handle reconnection with proper state management
+                    if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
                         eprintln!("Failed to reconnect: {}", e);
                     }
                     wait_before_retry().await;
@@ -240,9 +262,8 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
         let trimmed = message.message.trim_start();
         if trimmed.starts_with('!') {
             // It starts with '!', extract the command part (everything after the first '!')
-            let exclamation_pos = trimmed.find('!').unwrap();
-            let after_exclamation = &trimmed[exclamation_pos + 1..];
-            after_exclamation.trim_start().to_string()
+            // Safe to skip first char since we verified it starts with '!'
+            trimmed[1..].trim_start().to_string()
         } else {
             return None;
         }

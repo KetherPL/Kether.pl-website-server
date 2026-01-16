@@ -29,8 +29,12 @@ const HEALTH_CHECK_INTERVAL_SECS: u64 = 300; // 5 minutes
 pub fn start_message_listener(bot: Arc<SteamBot>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // Config is accessed through registry, so we don't need to pass it
-        if let Err(e) = run_message_listener(bot).await {
-            eprintln!("Message listener error: {}", e);
+        // Note: We can't format the error here because it might not be Send
+        // The error is already logged inside run_message_listener
+        if let Err(_) = run_message_listener(bot).await {
+            eprintln!("Message listener task exited with an error (check logs above for details)");
+        } else {
+            eprintln!("Message listener exited unexpectedly (should run indefinitely)");
         }
     })
 }
@@ -68,6 +72,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
     loop {
         // Check connection state before creating client
         let connection_state = bot.get_connection_state().await;
+        println!("Listener loop iteration: connection state = {:?}", connection_state);
         match connection_state {
             crate::steam_bot::state::ConnectionState::Reconnecting => {
                 // Wait for reconnection to complete (health check task is handling it)
@@ -101,16 +106,113 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                 continue;
             }
             crate::steam_bot::state::ConnectionState::Connected => {
-                // Connection is ready, proceed to create client
+                // Connection is ready, but validate session before proceeding
+                if !validate_session(&bot).await {
+                    eprintln!("Connection state is Connected but session is not available, attempting recovery...");
+                    if let Some(config) = registry::config_opt() {
+                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                            eprintln!("Failed to recover session: {}", e);
+                        }
+                    }
+                    wait_before_retry().await;
+                    continue;
+                }
+                
+                // Perform a quick health check before creating client
+                if let Some(config) = registry::config_opt() {
+                    // Convert error to string immediately to ensure Send
+                    let health_ok = match ConnectionManager::check_health(&bot).await {
+                        Ok(true) => true,
+                        Ok(false) => {
+                            eprintln!("Health check failed before creating client, attempting recovery...");
+                            false
+                        }
+                        Err(e) => {
+                            let error_msg = format!("{}", e);
+                            eprintln!("Health check error before creating client: {}, attempting recovery...", error_msg);
+                            false
+                        }
+                    };
+                    
+                    if !health_ok {
+                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                            eprintln!("Failed to recover: {}", e);
+                        }
+                        wait_before_retry().await;
+                        continue;
+                    }
+                }
             }
         }
         
         match create_chat_client(&bot).await {
             Some(chat_client) => {
+                // Validate session is still valid after creating client
+                if !validate_session(&bot).await {
+                    eprintln!("Session became invalid after creating client, attempting recovery...");
+                    if let Some(config) = registry::config_opt() {
+                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                            eprintln!("Failed to recover: {}", e);
+                        }
+                    }
+                    wait_before_retry().await;
+                    continue;
+                }
+                
+                // Perform one more health check right before listening
+                if let Some(config) = registry::config_opt() {
+                    // Convert error to string immediately to ensure Send
+                    let health_ok = match ConnectionManager::check_health(&bot).await {
+                        Ok(true) => {
+                            println!("Created chat client, connection validated, starting to listen for messages...");
+                            true
+                        }
+                        Ok(false) => {
+                            eprintln!("Health check failed after creating client, attempting recovery...");
+                            false
+                        }
+                        Err(e) => {
+                            let error_msg = format!("{}", e);
+                            eprintln!("Health check error after creating client: {}, attempting recovery...", error_msg);
+                            false
+                        }
+                    };
+                    
+                    if !health_ok {
+                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                            eprintln!("Failed to recover: {}", e);
+                        }
+                        wait_before_retry().await;
+                        continue;
+                    }
+                } else {
+                    println!("Created chat client, starting to listen for messages...");
+                }
+                
                 match listen_for_messages(chat_client, bot_steam_id).await {
                     Ok(()) => {
-                        eprintln!("Message listener completed unexpectedly");
-                        return Ok(());
+                        // listen_for_group_messages returned Ok(()) - this means the stream ended
+                        // This can happen when the connection is lost, so we should retry
+                        eprintln!("Message listener stream ended (connection may be lost), attempting recovery...");
+                        if let Some(config) = registry::config_opt() {
+                            // Use ensure_healthy() to handle reconnection with proper state management
+                            // This avoids race conditions with the health check task
+                            match ConnectionManager::ensure_healthy(&bot, config).await {
+                                Ok(()) => {
+                                    println!("Successfully recovered connection, retrying listener...");
+                                    // Wait a bit before retrying to ensure connection is stable
+                                    wait_before_retry().await;
+                                }
+                                Err(reconnect_err) => {
+                                    eprintln!("Failed to recover connection: {}, retrying listener anyway...", reconnect_err);
+                                    wait_before_retry().await;
+                                }
+                            }
+                        } else {
+                            eprintln!("Config not available, cannot recover connection. Retrying listener...");
+                            wait_before_retry().await;
+                        }
+                        // Continue loop to retry - don't exit!
                     }
                     Err(e) => {
                         // Convert error to string immediately to ensure Send
@@ -182,16 +284,33 @@ async fn get_bot_steam_id(bot: &Arc<SteamBot>) -> Result<u64, Box<dyn Error + Se
         .ok_or_else(|| "Bot Steam ID not available, message listener cannot detect mentions".into())
 }
 
+/// Validates that the session is still valid and usable
+/// 
+/// Returns true if the session exists and appears to be valid
+async fn validate_session(bot: &Arc<SteamBot>) -> bool {
+    let session_guard = bot.session.lock().await;
+    session_guard.is_some()
+}
+
 /// Creates a new ChatRoomClient from the bot's session connection
 /// 
 /// Returns None if the session is not available. The connection is cloned
 /// so the lock can be dropped before awaiting the listener.
+/// 
+/// Also validates the session before creating the client.
 async fn create_chat_client(bot: &Arc<SteamBot>) -> Option<SC_Sub_Poster::ChatRoomClient> {
+    // First validate that session exists
+    if !validate_session(bot).await {
+        eprintln!("Cannot create chat client: session is not available");
+        return None;
+    }
+    
     let connection = {
         let session_guard = bot.session.lock().await;
         session_guard.as_ref()?.chat().connection().clone()
     }; // Lock is dropped here - important to avoid deadlock
     
+    // Validate connection was successfully cloned
     Some(SC_Sub_Poster::ChatRoomClient::new(connection))
 }
 

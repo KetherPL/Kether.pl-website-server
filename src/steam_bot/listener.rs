@@ -58,7 +58,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
             if let Some(config) = registry::config_opt() {
                 // Use ensure_healthy() which checks connection state and properly handles recovery
                 // This matches what the call-for-sub bot uses and ensures Failed state is handled
-                if let Err(e) = ConnectionManager::ensure_healthy(&bot_for_health_check, config).await {
+                if let Err(e) = ConnectionManager::ensure_healthy(&bot_for_health_check, config, false).await {
                     eprintln!("Listener health check failed: {}", e);
                     // Continue loop even on error - don't let health check task die
                 }
@@ -85,7 +85,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                 eprintln!("Connection state is Failed, attempting reconnection...");
                 if let Some(config) = registry::config_opt() {
                     // Use ensure_healthy() which has retry logic and proper state management
-                    if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                    if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await {
                         eprintln!("Failed to recover from Failed state: {}", e);
                         wait_before_retry().await;
                         continue;
@@ -110,7 +110,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                 if !validate_session(&bot).await {
                     eprintln!("Connection state is Connected but session is not available, attempting recovery...");
                     if let Some(config) = registry::config_opt() {
-                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await {
                             eprintln!("Failed to recover session: {}", e);
                         }
                     }
@@ -135,7 +135,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                     };
                     
                     if !health_ok {
-                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, false).await {
                             eprintln!("Failed to recover: {}", e);
                         }
                         wait_before_retry().await;
@@ -151,7 +151,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                 if !validate_session(&bot).await {
                     eprintln!("Session became invalid after creating client, attempting recovery...");
                     if let Some(config) = registry::config_opt() {
-                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await {
                             eprintln!("Failed to recover: {}", e);
                         }
                     }
@@ -179,7 +179,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                     };
                     
                     if !health_ok {
-                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await {
                             eprintln!("Failed to recover: {}", e);
                         }
                         wait_before_retry().await;
@@ -197,7 +197,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                         if let Some(config) = registry::config_opt() {
                             // Use ensure_healthy() to handle reconnection with proper state management
                             // This avoids race conditions with the health check task
-                            match ConnectionManager::ensure_healthy(&bot, config).await {
+                            match ConnectionManager::ensure_healthy(&bot, config, true).await {
                                 Ok(()) => {
                                     println!("Successfully recovered connection, retrying listener...");
                                     // Wait a bit before retrying to ensure connection is stable
@@ -225,7 +225,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                             if let Some(config) = registry::config_opt() {
                                 // Use ensure_healthy() to handle reconnection with proper state management
                                 // This avoids race conditions with the health check task
-                                match ConnectionManager::ensure_healthy(&bot, config).await {
+                                match ConnectionManager::ensure_healthy(&bot, config, true).await {
                                     Ok(()) => {
                                         println!("Successfully reconnected, retrying listener...");
                                         // Wait a bit before retrying to ensure connection is stable
@@ -263,7 +263,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                         if let Some(config) = registry::config_opt() {
                             eprintln!("Attempting to reconnect...");
                             // Use ensure_healthy() to handle reconnection with proper state management
-                            if let Err(e) = ConnectionManager::ensure_healthy(&bot, config).await {
+                            if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await {
                                 eprintln!("Failed to reconnect: {}", e);
                             }
                             wait_before_retry().await;

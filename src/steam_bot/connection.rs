@@ -183,7 +183,12 @@ impl ConnectionManager {
     async fn perform_health_check_with_recovery(
         bot: &SteamBot,
         config: &Config,
+        force: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if force {
+            println!("Performing forced Steam connection health check...");
+        }
+
         let is_healthy = match Self::check_health(bot).await {
             Ok(healthy) => healthy,
             Err(e) => {
@@ -212,7 +217,7 @@ impl ConnectionManager {
                     }
                 }
             }
-        } else {
+        } else if !force {
             println!("Steam connection health check passed");
         }
         
@@ -234,9 +239,11 @@ impl ConnectionManager {
     /// # Returns
     /// * `Ok(())` - If connection is healthy or successfully reconnected
     /// * `Err(Box<dyn std::error::Error + Send + Sync>)` - If connection cannot be established
-    pub async fn ensure_healthy(bot: &SteamBot, config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Check if we need to perform a health check (every 5 minutes)
-        let should_check = {
+    pub async fn ensure_healthy(bot: &SteamBot, config: &Config, force: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Check if we need to perform a health check (every 5 minutes or if forced)
+        let should_check = if force {
+            true
+        } else {
             let mut last_check_guard = bot.last_health_check.lock().await;
             let now = Instant::now();
             let should = Self::should_perform_health_check(*last_check_guard);
@@ -247,7 +254,7 @@ impl ConnectionManager {
         };
         
         if should_check {
-            Self::perform_health_check_with_recovery(bot, config).await?;
+            Self::perform_health_check_with_recovery(bot, config, force).await?;
         }
         
         Ok(())

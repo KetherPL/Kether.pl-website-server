@@ -172,47 +172,6 @@ impl MessageSender {
         }
     }
 
-    /// Sends a message to a specific Steam group chat room with automatic recovery
-    /// 
-    /// This function sends a message to the specified Steam group chat using
-    /// the provided chat_group_id and chat_id, with automatic reconnection
-    /// and retry logic on connection failures. Use this when replying to a
-    /// message in the same chat room.
-    /// 
-    /// If a connection error occurs, this function automatically attempts
-    /// to reconnect and retry sending the message once.
-    /// 
-    /// # Arguments
-    /// * `bot` - Reference to the SteamBot instance
-    /// * `message` - The message to send to the Steam group chat
-    /// * `chat_group_id` - The chat group ID to send the message to
-    /// * `chat_id` - The chat room ID to send the message to
-    /// * `config` - Reference to the Config (needed for reconnection)
-    /// 
-    /// # Returns
-    /// * `Ok(u64)` - The message ordinal if message is sent successfully
-    /// * `Err(Box<dyn std::error::Error>)` - If sending fails after retry
-    pub async fn send_to_chat_with_recovery(
-        bot: &SteamBot,
-        message: &str,
-        chat_group_id: u64,
-        chat_id: u64,
-        config: &Config,
-    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        match Self::send_to_chat(bot, message, chat_group_id, chat_id).await {
-            Ok(ordinal) => Ok(ordinal),
-            Err(e) => {
-                let error_str = e.to_string().to_lowercase();
-                if is_connection_error(&error_str) {
-                    Self::handle_connection_error(bot, config, e).await?;
-                    // Retry sending the message
-                    Self::send_to_chat(bot, message, chat_group_id, chat_id).await
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
 
     /// Sends a message using the global SteamBot instance
     /// 

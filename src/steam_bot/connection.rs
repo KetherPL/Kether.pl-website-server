@@ -135,6 +135,28 @@ impl ConnectionManager {
     /// * `Ok(())` - If reconnection is successful
     /// * `Err(Box<dyn std::error::Error + Send + Sync>)` - If reconnection fails
     pub async fn reconnect(bot: &SteamBot, config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Check if already reconnecting to prevent "reconnection storms"
+        {
+            let state = bot.get_connection_state().await;
+            if matches!(state, ConnectionState::Reconnecting) {
+                println!("Reconnection already in progress, waiting...");
+                // Wait for the other process to finish (poll up to 30 seconds)
+                for _ in 0..60 {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let new_state = bot.get_connection_state().await;
+                    match new_state {
+                        ConnectionState::Connected => {
+                            println!("Other reconnection attempt succeeded!");
+                            return Ok(());
+                        }
+                        ConnectionState::Reconnecting => continue, // Still connecting
+                        _ => break, // Failed or disconnected, we can take over
+                    }
+                }
+                println!("Wait for existing reconnection timed out or failed, taking over...");
+            }
+        }
+
         // Update connection state
         Self::update_connection_state(bot, ConnectionState::Reconnecting).await;
         

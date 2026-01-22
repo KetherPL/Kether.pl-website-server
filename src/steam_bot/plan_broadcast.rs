@@ -252,25 +252,6 @@ fn start_expiration_checker(timestamp: i64) {
     println!("Expiration checker task spawned and stored");
 }
 
-/// Broadcasts a message to all connected WebSocket clients
-/// 
-/// This function sends a message (either "SET <timestamp>" or "CLEAR") to all
-/// active receivers (WebSocket connections). If no receivers are connected,
-/// the message is silently dropped (this is normal behavior for broadcast channels).
-/// 
-/// # Arguments
-/// * `message` - The message to broadcast (as String)
-/// 
-/// # Note
-/// This function gracefully handles the case where the broadcaster hasn't been
-/// initialized yet (e.g., if called before Rocket starts). In such cases, it
-/// does nothing.
-#[cfg(feature = "rest_api")]
-pub fn broadcast_message(message: String) {
-    if let Some(tx) = PLAN_BROADCASTER.get() {
-        let _ = tx.send(message); // Ignore errors if no receivers
-    }
-}
 
 /// Gets the current reservation timestamp, if any
 /// 

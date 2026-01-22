@@ -68,6 +68,7 @@ pub struct SteamBot {
     pub(crate) last_health_check: Arc<Mutex<Option<Instant>>>,
     pub(crate) reconnect_attempts: Arc<Mutex<u32>>,
     pub(crate) bot_steam_id: Arc<Mutex<Option<u64>>>,
+    pub(crate) generation: Arc<Mutex<u64>>,
 }
 
 impl std::fmt::Debug for SteamBot {
@@ -98,6 +99,7 @@ impl SteamBot {
             last_health_check: Arc::new(Mutex::new(None)),
             reconnect_attempts: Arc::new(Mutex::new(0)),
             bot_steam_id: Arc::new(Mutex::new(None)),
+            generation: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -190,6 +192,12 @@ impl SteamBot {
         // Log successful login
         println!("SteamBot logged in successfully");
 
+        // Increment generation counter
+        {
+            let mut gen_guard = self.generation.lock().await;
+            *gen_guard += 1;
+        }
+
         Ok(())
     }
 
@@ -244,6 +252,15 @@ impl SteamBot {
     pub async fn get_bot_steam_id(&self) -> Option<u64> {
         let steam_id_guard = self.bot_steam_id.lock().await;
         *steam_id_guard
+    }
+
+    /// Gets the current connection generation
+    /// 
+    /// The generation increments every time the bot successfully logs in.
+    /// This can be used to detect when a connection has been replaced.
+    pub async fn get_generation(&self) -> u64 {
+        let gen_guard = self.generation.lock().await;
+        *gen_guard
     }
 }
 

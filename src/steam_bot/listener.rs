@@ -189,7 +189,10 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                     println!("Created chat client, starting to listen for messages...");
                 }
                 
-                match listen_for_messages(chat_client, bot_steam_id).await {
+                // Get the current generation to monitor for changes
+                let current_generation = bot.get_generation().await;
+                
+                match listen_for_messages(chat_client, bot_steam_id, &bot, current_generation).await {
                     Ok(()) => {
                         // listen_for_group_messages returned Ok(()) - this means the stream ended
                         // This can happen when the connection is lost, so we should retry
@@ -315,15 +318,35 @@ async fn create_chat_client(bot: &Arc<SteamBot>) -> Option<SC_Sub_Poster::ChatRo
 }
 
 /// Listens for incoming messages and processes commands
+/// 
+/// Monitors the bot's generation counter and returns an error if it changes,
+/// indicating that the underlying connection has been replaced (reconnected).
 async fn listen_for_messages(
     chat_client: SC_Sub_Poster::ChatRoomClient,
     bot_steam_id: u64,
+    bot: &Arc<SteamBot>,
+    initial_generation: u64,
 ) -> Result<(), String> {
-    chat_client.listen_for_group_messages(move |message: EnhancedGroupChatMessage| {
+    let listener_future = chat_client.listen_for_group_messages(move |message: EnhancedGroupChatMessage| {
         if let Some(response) = process_message(&message, bot_steam_id) {
             send_command_response(&message, &response);
         }
-    }).await.map_err(|e| format!("{}", e))
+    });
+
+    let bot_clone = bot.clone();
+    let monitor_future = async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            if bot_clone.get_generation().await != initial_generation {
+                return Err("Connection generation changed (reconnected remotely)".to_string());
+            }
+        }
+    };
+
+    tokio::select! {
+        res = listener_future => res.map_err(|e| format!("{}", e)),
+        res = monitor_future => res,
+    }
 }
 
 /// Sends a command response to the same chat room as the incoming message

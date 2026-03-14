@@ -275,6 +275,19 @@ commands_without_mention = false
 		self.server_port
 	}
 
+	/// Get the primary L4D2 server endpoint if configured
+	///
+	/// # Returns
+	/// `Some((ip, port))` when both values are set, otherwise `None`
+	/// (For the Steam bot status command to use)
+	pub fn primary_server(&self) -> Option<(&str, u16)> {
+		if self.server_ip.trim().is_empty() || self.server_port == 0 {
+			None
+		} else {
+			Some((self.server_ip(), self.server_port()))
+		}
+	}
+
 	/// Get the L4D2 server2 IP address
 	/// 
 	/// # Returns
@@ -289,6 +302,19 @@ commands_without_mention = false
 	/// The server2 port number
 	pub fn server2_port(&self) -> u16 {
 		self.server2_port
+	}
+
+	/// Get the secondary L4D2 server endpoint if configured
+	///
+	/// # Returns
+	/// `Some((ip, port))` when both values are set, otherwise `None`
+	/// (For the Steam bot !status command to use)
+	pub fn secondary_server(&self) -> Option<(&str, u16)> {
+		if self.server2_ip.trim().is_empty() || self.server2_port == 0 {
+			None
+		} else {
+			Some((self.server2_ip(), self.server2_port()))
+		}
 	}
 }
 

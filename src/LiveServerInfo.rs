@@ -4,6 +4,8 @@
 use gamedig::{games::l4d2, protocols::valve::game::Player};
 use rocket::{get, serde::{Deserialize, Serialize, json::Json}, http::Status, State};
 use once_cell::sync::OnceCell;
+use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use crate::config::Config;
@@ -39,12 +41,14 @@ impl From<Player> for PD {
 	}
 }
 
-// Cache for last successful query response
-static LAST_GOOD_RESPONSE: OnceCell<RwLock<Option<(L4D2ServerInfo, Instant)>>> = OnceCell::new();
+// Cache successful query responses per server endpoint.
+type ServerCache = HashMap<(IpAddr, u16), (L4D2ServerInfo, Instant)>;
+
+static LAST_GOOD_RESPONSE: OnceCell<RwLock<ServerCache>> = OnceCell::new();
 
 /// Initialize the cache
-fn get_cache() -> &'static RwLock<Option<(L4D2ServerInfo, Instant)>> {
-	LAST_GOOD_RESPONSE.get_or_init(|| RwLock::new(None))
+fn get_cache() -> &'static RwLock<ServerCache> {
+	LAST_GOOD_RESPONSE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 /// Query L4D2 server with retry logic and caching
@@ -57,13 +61,14 @@ fn get_cache() -> &'static RwLock<Option<(L4D2ServerInfo, Instant)>> {
 pub async fn query_server_with_retry(ip: &str, port: u16) -> Result<L4D2ServerInfo, Status> {
 	const MAX_RETRIES: u32 = 3;
 	const CACHE_TTL_SECS: u64 = 60;
+	let parsed_ip: IpAddr = ip.parse().map_err(|_| Status::BadRequest)?;
 	
 	// Try to query with retries
 	for attempt in 1..=MAX_RETRIES {
 		// Run blocking query in separate thread to avoid blocking async runtime
-		let ip_clone = ip.to_string();
+		let ip_clone = parsed_ip;
 		let query_result = tokio::task::spawn_blocking(move || {
-			l4d2::query(&ip_clone.parse().unwrap(), Some(port))
+			l4d2::query(&ip_clone, Some(port))
 		}).await;
 		
 		match query_result {
@@ -80,7 +85,7 @@ pub async fn query_server_with_retry(ip: &str, port: u16) -> Result<L4D2ServerIn
 				
 				// Update cache
 				if let Ok(mut cache) = get_cache().write() {
-					*cache = Some((server_info.clone(), Instant::now()));
+					cache.insert((parsed_ip, port), (server_info.clone(), Instant::now()));
 				}
 				
 				return Ok(server_info);
@@ -114,7 +119,7 @@ pub async fn query_server_with_retry(ip: &str, port: u16) -> Result<L4D2ServerIn
 	
 	// All retries failed - check cache
 	if let Ok(cache) = get_cache().read() {
-		if let Some((cached_info, cached_time)) = cache.as_ref() {
+		if let Some((cached_info, cached_time)) = cache.get(&(parsed_ip, port)) {
 			let age = Instant::now().duration_since(*cached_time);
 			if age.as_secs() < CACHE_TTL_SECS {
 				eprintln!("Query failed, returning cached data (age: {}s)", age.as_secs());

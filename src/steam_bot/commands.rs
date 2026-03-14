@@ -349,7 +349,36 @@ inventory::submit! {
 struct StatusCommand;
 
 #[cfg(feature = "server_query")]
+struct ConfiguredServer<'a> {
+    label: &'static str,
+    ip: &'a str,
+    port: u16,
+}
+
+#[cfg(feature = "server_query")]
 impl StatusCommand {
+    fn configured_servers<'a>(config: &'a crate::config::Config) -> Vec<ConfiguredServer<'a>> {
+        let mut servers = Vec::new();
+
+        if let Some((ip, port)) = config.primary_server() {
+            servers.push(ConfiguredServer {
+                label: "1",
+                ip,
+                port,
+            });
+        }
+
+        if let Some((ip, port)) = config.secondary_server() {
+            servers.push(ConfiguredServer {
+                label: "2",
+                ip,
+                port,
+            });
+        }
+
+        servers
+    }
+
     /// Formats server status as a summary (without player list)
     fn format_summary_status(server_info: &crate::LiveServerInfo::L4D2ServerInfo) -> String {
         format!(
@@ -384,37 +413,62 @@ impl StatusCommand {
         
         response
     }
+
+    fn format_status_block(label: &str, body: String, multiple_servers: bool) -> String {
+        if multiple_servers {
+            format!("{}:\n{}", label, body)
+        } else {
+            body
+        }
+    }
 }
 
 #[cfg(feature = "server_query")]
 #[async_trait]
 impl CommandHandler for StatusCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
-        // Get server configuration from registry
         let config = registry::config();
-        let server_ip = config.server_ip().to_string();
-        let server_port = config.server_port();
-        
-        // Check if server is configured
-        if server_ip.is_empty() || server_port == 0 {
+        let servers = Self::configured_servers(config);
+
+        if servers.is_empty() {
             return Err(CommandError::ConfigError("Server Status: Configuration error".to_string()));
         }
-        
-        // Check if "full" argument is provided
-        let is_full = ctx.args.to_lowercase().trim() == "full" || ctx.args.to_lowercase().trim() == "f";
-        
-        // Query the server asynchronously
-        match LiveServerInfo::query_server_with_retry(&server_ip, server_port).await {
-            Ok(server_info) => {
-                if is_full {
-                    Ok(Self::format_full_status(&server_info))
-                } else {
-                    Ok(Self::format_summary_status(&server_info))
+ 
+        let normalized_args = ctx.args.trim().to_lowercase();
+        let is_full = normalized_args == "full" || normalized_args == "f";
+        let multiple_servers = servers.len() > 1;
+        let mut responses = Vec::new();
+        let mut any_server_responded = false;
+
+        for server in servers {
+            match LiveServerInfo::query_server_with_retry(server.ip, server.port).await {
+                Ok(server_info) => {
+                    let body = if is_full {
+                        Self::format_full_status(&server_info)
+                    } else {
+                        Self::format_summary_status(&server_info)
+                    };
+
+                    responses.push(Self::format_status_block(server.label, body, multiple_servers));
+                    any_server_responded = true;
+                }
+                Err(_) if multiple_servers => {
+                    responses.push(Self::format_status_block(
+                        server.label,
+                        "Server Status: Offline or unavailable".to_string(),
+                        true,
+                    ));
+                }
+                Err(_) => {
+                    return Err(CommandError::ServerError("Server Status: Offline or unavailable".to_string()));
                 }
             }
-            Err(_) => {
-                Err(CommandError::ServerError("Server Status: Offline or unavailable".to_string()))
-            }
+        }
+
+        if any_server_responded || multiple_servers {
+            Ok(responses.join("\n\n"))
+        } else {
+            Err(CommandError::ServerError("Server Status: Offline or unavailable".to_string()))
         }
     }
     
@@ -422,7 +476,7 @@ impl CommandHandler for StatusCommand {
         static METADATA: CommandMetadata = CommandMetadata {
             name: "status",
             aliases: &["s"],
-            description: "Shows server status.",
+            description: "Shows status for the configured server or servers.",
             usage: Some("!status | !s | !status full | !s f"),
         };
         &METADATA

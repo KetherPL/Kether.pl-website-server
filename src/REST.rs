@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub"))]
+#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "server_query"))]
 use crate::config::Config;
 #[cfg(feature = "server_query")]
 use crate::LiveServerInfo::{live_server_info, live_server_info_kether};
@@ -70,7 +70,8 @@ pub fn rocket() -> Rocket<Build> {
 		"http://localhost:80",   // Web Browser testing the paths and api
 		"https://kether.pl",
 		"http://kether.pl", // Unencrypted HTTP shouldn't really happen, but allow it just in case... Just don't break the website when it happens
-		"http://54.36.179.182", // L4D2 server calling for sub through Rest in Pawn
+		"http://54.36.179.182", // L4D2 server (OVH) calling for sub through Rest in Pawn
+		"http://104.245.245.137", // L4D2 server (POLANDVPN/host4fun) calling for sub through Rest in Pawn
 	]);
 
 	let cors = CorsOptions {
@@ -90,7 +91,7 @@ pub fn rocket() -> Rocket<Build> {
 		crate::steam_bot::plan_broadcast::init_broadcaster();
 	}
 
-	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "rest_json_db"))]
+	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "rest_json_db", feature = "server_query"))]
 	{
 		let config = smol::block_on(Config::load()).expect("Failed to load configuration");
 		rocket_build = rocket_build.manage(config);

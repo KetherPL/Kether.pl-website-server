@@ -2,10 +2,11 @@
 
 #![allow(non_snake_case)]
 use gamedig::{games::l4d2, protocols::valve::game::Player};
-use rocket::{get, serde::{Deserialize, Serialize, json::Json}, http::Status};
+use rocket::{get, serde::{Deserialize, Serialize, json::Json}, http::Status, State};
 use once_cell::sync::OnceCell;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
+use crate::config::Config;
 
 // Define a struct to represent the L4D2 server response
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -135,12 +136,7 @@ pub async fn live_server_info(ip: String, port: u16) -> Result<Json<L4D2ServerIn
 }
 
 #[get("/kether")]
-pub async fn live_server_info_kether() -> Result<Json<L4D2ServerInfo>, Status> {
-	/* Hardcoded for simplicity, in a real-world application, 
-	  this should be fetched from a configuration file or a database.
-	  OVH-hosted Kether.pl L4D2 server as of July 2025.
-	  LiveServer.pl hosting unfortunately died at the end of June 2025 :(
-	*/
-	query_server_with_retry("54.36.179.182", 27015).await
+pub async fn live_server_info_kether(config: &State<Config>) -> Result<Json<L4D2ServerInfo>, Status> {
+	query_server_with_retry(config.server_ip(), config.server_port()).await
 		.map(Json)
 }

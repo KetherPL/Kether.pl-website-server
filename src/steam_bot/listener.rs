@@ -454,7 +454,7 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
             handle.spawn(async move {
                 // Send placeholder message only for commands that need it (like !status)
                 let placeholder_preprocessed = if needs_placeholder {
-                    match MessageSender::send_to_chat_global_with_preprocessed("Querying server...", chat_group_id, chat_id).await {
+                    match MessageSender::send_to_chat_global_with_preprocessed("Querying servers...", chat_group_id, chat_id).await {
                         Ok(preprocessed) => Some(preprocessed),
                         Err(e) => {
                             eprintln!("Failed to send placeholder message: {}", e);

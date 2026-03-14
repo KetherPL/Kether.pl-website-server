@@ -85,6 +85,15 @@ struct ServerConfig {
 	port: u16,
 }
 
+impl ServerConfig {
+	fn empty() -> Self {
+		ServerConfig {
+			ip: String::new(),
+			port: 0,
+		}
+	}
+}
+
 impl Default for ConfigFile {
 	fn default() -> Self {
 		ConfigFile {
@@ -127,10 +136,7 @@ impl Default for ChatConfig {
 
 impl Default for ServerConfig {
 	fn default() -> Self {
-		ServerConfig {
-			ip: "54.36.179.182".to_string(),
-			port: 27015,
-		}
+		ServerConfig::empty()
 	}
 }
 

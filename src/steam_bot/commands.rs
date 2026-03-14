@@ -350,19 +350,29 @@ struct StatusCommand;
 
 #[cfg(feature = "server_query")]
 struct ConfiguredServer<'a> {
-    label: &'static str,
+    id: u8,
     ip: &'a str,
     port: u16,
 }
 
 #[cfg(feature = "server_query")]
+struct StatusArgs {
+    server_id: Option<u8>,
+    is_full: bool,
+}
+
+#[cfg(feature = "server_query")]
 impl StatusCommand {
+    fn usage_hint() -> &'static str {
+        "!status [1|2] [full|f]"
+    }
+
     fn configured_servers<'a>(config: &'a crate::config::Config) -> Vec<ConfiguredServer<'a>> {
         let mut servers = Vec::new();
 
         if let Some((ip, port)) = config.primary_server() {
             servers.push(ConfiguredServer {
-                label: "1",
+                id: 1,
                 ip,
                 port,
             });
@@ -370,13 +380,77 @@ impl StatusCommand {
 
         if let Some((ip, port)) = config.secondary_server() {
             servers.push(ConfiguredServer {
-                label: "2",
+                id: 2,
                 ip,
                 port,
             });
         }
 
         servers
+    }
+
+    fn parse_args(args: &str) -> Result<StatusArgs, CommandError> {
+        let mut server_id = None;
+        let mut is_full = false;
+
+        for token in args.split_whitespace() {
+            let normalized = token.to_lowercase();
+
+            match normalized.as_str() {
+                "full" | "f" => {
+                    if is_full {
+                        return Err(CommandError::InvalidArguments(format!(
+                            "Server Status: Invalid arguments. Usage: {}",
+                            Self::usage_hint()
+                        )));
+                    }
+
+                    is_full = true;
+                }
+                "1" | "2" => {
+                    if server_id.is_some() {
+                        return Err(CommandError::InvalidArguments(format!(
+                            "Server Status: Invalid arguments. Usage: {}",
+                            Self::usage_hint()
+                        )));
+                    }
+
+                    server_id = normalized.parse().ok();
+                }
+                _ => {
+                    return Err(CommandError::InvalidArguments(format!(
+                        "Server Status: Invalid arguments. Usage: {}",
+                        Self::usage_hint()
+                    )));
+                }
+            }
+        }
+
+        Ok(StatusArgs { server_id, is_full })
+    }
+
+    fn select_servers<'a>(
+        servers: Vec<ConfiguredServer<'a>>,
+        server_id: Option<u8>,
+    ) -> Result<Vec<ConfiguredServer<'a>>, CommandError> {
+        match server_id {
+            Some(server_id) => {
+                let selected_servers: Vec<_> = servers
+                    .into_iter()
+                    .filter(|server| server.id == server_id)
+                    .collect();
+
+                if selected_servers.is_empty() {
+                    Err(CommandError::ConfigError(format!(
+                        "Server Status: Server {} is not configured",
+                        server_id
+                    )))
+                } else {
+                    Ok(selected_servers)
+                }
+            }
+            None => Ok(servers),
+        }
     }
 
     /// Formats server status as a summary (without player list)
@@ -414,9 +488,9 @@ impl StatusCommand {
         response
     }
 
-    fn format_status_block(label: &str, body: String, multiple_servers: bool) -> String {
+    fn format_status_block(id: u8, body: String, multiple_servers: bool) -> String {
         if multiple_servers {
-            format!("{}:\n{}", label, body)
+            format!("{}:\n{}", id, body)
         } else {
             body
         }
@@ -428,14 +502,13 @@ impl StatusCommand {
 impl CommandHandler for StatusCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
         let config = registry::config();
-        let servers = Self::configured_servers(config);
+        let parsed_args = Self::parse_args(ctx.args)?;
+        let servers = Self::select_servers(Self::configured_servers(config), parsed_args.server_id)?;
 
         if servers.is_empty() {
             return Err(CommandError::ConfigError("Server Status: Configuration error".to_string()));
         }
- 
-        let normalized_args = ctx.args.trim().to_lowercase();
-        let is_full = normalized_args == "full" || normalized_args == "f";
+
         let multiple_servers = servers.len() > 1;
         let mut responses = Vec::new();
         let mut any_server_responded = false;
@@ -443,18 +516,18 @@ impl CommandHandler for StatusCommand {
         for server in servers {
             match LiveServerInfo::query_server_with_retry(server.ip, server.port).await {
                 Ok(server_info) => {
-                    let body = if is_full {
+                    let body = if parsed_args.is_full {
                         Self::format_full_status(&server_info)
                     } else {
                         Self::format_summary_status(&server_info)
                     };
 
-                    responses.push(Self::format_status_block(server.label, body, multiple_servers));
+                    responses.push(Self::format_status_block(server.id, body, multiple_servers));
                     any_server_responded = true;
                 }
                 Err(_) if multiple_servers => {
                     responses.push(Self::format_status_block(
-                        server.label,
+                        server.id,
                         "Server Status: Offline or unavailable".to_string(),
                         true,
                     ));
@@ -476,8 +549,8 @@ impl CommandHandler for StatusCommand {
         static METADATA: CommandMetadata = CommandMetadata {
             name: "status",
             aliases: &["s"],
-            description: "Shows status for the configured server or servers.",
-            usage: Some("!status | !s | !status full | !s f"),
+            description: "Shows status for the configured server(s), optionally filtered by id.",
+            usage: Some("!status | !s | !status full | !s f | !status 1 | !s 1 f | !s 2 f"),
         };
         &METADATA
     }
@@ -488,8 +561,8 @@ inventory::submit! {
     CommandInfo::new(
         "status",
         &["s"],
-        "Shows server status. Use 'f' or 'full' argument to see player list with play times.",
-        Some("!status | !s | !status full | !s f"),
+        "Shows status for the configured server(s). Use optional id 1 or 2 to select one server, and 'f' or 'full' for player lists.",
+        Some("!status | !s | !status full | !s f | !status 1 | !s 1 f | !s 2 f"),
         || Box::new(StatusCommand)
     )
 }

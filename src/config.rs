@@ -24,6 +24,9 @@ struct ConfigFile {
 
 	#[serde(default)]
 	server: ServerConfig,
+
+	#[serde(default)]
+	server2: ServerConfig,
 }
 
 /// Steam-related configuration
@@ -88,6 +91,7 @@ impl Default for ConfigFile {
 			frontend_admins: Vec::new(),
 			steam: SteamConfig::default(),
 			server: ServerConfig::default(),
+			server2: ServerConfig::default(),
 		}
 	}
 }
@@ -154,6 +158,8 @@ pub struct Config {
 	pub steam_password: String,
 	pub server_ip: String,
 	pub server_port: u16,
+	pub server2_ip: String,
+	pub server2_port: u16,
 	pub steam_bot_commands_without_mention: bool,
 }
 
@@ -190,6 +196,8 @@ impl Config {
 			steam_password: config_file.steam.bot.password,
 			server_ip: config_file.server.ip,
 			server_port: config_file.server.port,
+			server2_ip: config_file.server2.ip,
+			server2_port: config_file.server2.port,
 			steam_bot_commands_without_mention: config_file.steam.chat.commands_without_mention,
 		})
 	}
@@ -205,8 +213,14 @@ impl Config {
 frontend_admins = []
 
 # L4D2 Server Configuration
-# Server address used for !status command and server queries
+# Server address used for !status command and server queries (main server)
 [server]
+ip = ""
+port = 0
+
+# Secondary L4D2 Server Configuration
+# Server address used for !status command and server queries (secondary server; usually for testing purposes)
+[server2]
 ip = ""
 port = 0
 
@@ -259,6 +273,22 @@ commands_without_mention = false
 	/// The server port number
 	pub fn server_port(&self) -> u16 {
 		self.server_port
+	}
+
+	/// Get the L4D2 server2 IP address
+	/// 
+	/// # Returns
+	/// The server2 IP address as a string
+	pub fn server2_ip(&self) -> &str {
+		&self.server2_ip
+	}
+
+	/// Get the L4D2 server2 port number
+	/// 
+	/// # Returns
+	/// The server2 port number
+	pub fn server2_port(&self) -> u16 {
+		self.server2_port
 	}
 }
 

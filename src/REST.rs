@@ -3,7 +3,7 @@
 #[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "server_query"))]
 use crate::config::Config;
 #[cfg(feature = "server_query")]
-use crate::LiveServerInfo::{live_server_info, live_server_info_kether};
+use crate::LiveServerInfo::{live_server_info, live_server_info_kether, live_server_info_kether2};
 #[cfg(feature = "rest_steam")]
 use crate::steam_rest::mount_steam_routes;
 #[cfg(feature = "rest_json_db")]
@@ -106,7 +106,9 @@ pub fn rocket() -> Rocket<Build> {
 	}
 	#[cfg(feature = "server_query")]
 	{
-		rocket_build = rocket_build.mount("/api/LiveServerInfo", routes![live_server_info, live_server_info_kether]);
+		rocket_build = rocket_build.mount("/api/LiveServerInfo", routes![
+			live_server_info, live_server_info_kether, live_server_info_kether2,
+		]);
 	}
 	#[cfg(feature = "rest_steam")]
 	{

@@ -140,3 +140,9 @@ pub async fn live_server_info_kether(config: &State<Config>) -> Result<Json<L4D2
 	query_server_with_retry(config.server_ip(), config.server_port()).await
 		.map(Json)
 }
+
+#[get("/kether2")]
+pub async fn live_server_info_kether2(config: &State<Config>) -> Result<Json<L4D2ServerInfo>, Status> {
+	query_server_with_retry(config.server2_ip(), config.server2_port()).await
+		.map(Json)
+}

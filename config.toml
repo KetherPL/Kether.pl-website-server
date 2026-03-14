@@ -7,10 +7,16 @@
 frontend_admins = []
 
 # L4D2 Server Configuration
-# Server address used for !status command and server queries
+# Server address used for !status command and server queries (main server)
 [server]
 ip = "192.168.1.102"
 port = 27015
+
+# Secondary L4D2 Server Configuration
+# Server address used for !status command and server queries (secondary server; usually for testing purposes)
+[server2]
+ip = ""
+port = 0
 
 [steam]
 # Steam Web API key for fetching user data (name, avatar, profile, etc.)

@@ -804,7 +804,7 @@ struct PlanArgs<'a> {
 #[async_trait]
 impl CommandHandler for PlanCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
-        Ok(Self::execute_plan(ctx.args))
+        Ok(Self::execute_plan(ctx.args).await)
     }
     
     fn metadata(&self) -> &CommandMetadata {
@@ -878,22 +878,34 @@ impl PlanCommand {
         }
     }
 
-    fn selected_server_ip(server_id: u8) -> Result<String, String> {
-        let ip = registry::config()
+    fn selected_server_endpoint(server_id: u8) -> Result<(String, u16), String> {
+        let (ip, port) = registry::config()
             .server_by_id(server_id)
-            .map(|(ip, _)| ip.to_string())
+            .map(|(ip, port)| (ip.to_string(), port))
             .ok_or_else(|| format!("Server {} is not configured.", server_id))?;
 
         ip.parse::<std::net::IpAddr>()
             .map_err(|_| format!("Server {} has an invalid IP configuration.", server_id))?;
 
-        Ok(ip)
+        Ok((ip, port))
+    }
+
+    async fn query_targeted_server_name(server_ip: &str, server_port: u16) -> Option<String> {
+        match tokio::time::timeout(
+            tokio::time::Duration::from_millis(300),
+            LiveServerInfo::query_server_name(server_ip, server_port),
+        )
+        .await
+        {
+            Ok(Ok(server_name)) => Some(server_name),
+            Ok(Err(_)) | Err(_) => None,
+        }
     }
 
     /// Internal implementation of the plan command logic
     /// 
     /// This method is shared between execute() and execute_async_owned() to avoid code duplication.
-    fn execute_plan(args: &str) -> String {
+    async fn execute_plan(args: &str) -> String {
         let parsed_args = match Self::parse_args(args) {
             Ok(parsed_args) => parsed_args,
             Err(error) => return error,
@@ -926,8 +938,8 @@ impl PlanCommand {
             #[cfg(feature = "rest_api")]
             {
                 match parsed_args.server_id {
-                    Some(server_id) => match Self::selected_server_ip(server_id) {
-                        Ok(ip) => crate::steam_bot::plan_broadcast::get_targeted_timestamp(&ip).is_some(),
+                    Some(server_id) => match Self::selected_server_endpoint(server_id) {
+                        Ok((ip, _)) => crate::steam_bot::plan_broadcast::get_targeted_timestamp(&ip).is_some(),
                         Err(error) => return error,
                     },
                     None => crate::steam_bot::plan_broadcast::get_current_timestamp().is_some(),
@@ -943,8 +955,8 @@ impl PlanCommand {
         #[cfg(feature = "rest_api")]
         {
             if let Some(server_id) = parsed_args.server_id {
-                let target_ip = match Self::selected_server_ip(server_id) {
-                    Ok(ip) => ip,
+                let target_ip = match Self::selected_server_endpoint(server_id) {
+                    Ok((ip, _)) => ip,
                     Err(error) => return error,
                 };
 
@@ -959,10 +971,34 @@ impl PlanCommand {
         
         // Return formatted message
         if let Some(server_id) = parsed_args.server_id {
+            let (server_ip, server_port) = match Self::selected_server_endpoint(server_id) {
+                Ok(endpoint) => endpoint,
+                Err(error) => return error,
+            };
+            let server_name = Self::query_targeted_server_name(&server_ip, server_port).await;
+
             if is_replan {
-                format!("Re-planned lobby time for server {}: {}", server_id, time_str)
+                match server_name {
+                    Some(server_name) => format!(
+                        "Re-planned lobby time for server {}: {}\nServer: {} | IP: {}:{}",
+                        server_id, time_str, server_name, server_ip, server_port
+                    ),
+                    None => format!(
+                        "Re-planned lobby time for server {}: {}\nServer IP: {}:{}",
+                        server_id, time_str, server_ip, server_port
+                    ),
+                }
             } else {
-                format!("Planned lobby time for server {}: {} [mention=all]@all[/mention]", server_id, time_str)
+                match server_name {
+                    Some(server_name) => format!(
+                        "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer: {} | IP: {}:{}",
+                        server_id, time_str, server_name, server_ip, server_port
+                    ),
+                    None => format!(
+                        "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer IP: {}:{}",
+                        server_id, time_str, server_ip, server_port
+                    ),
+                }
             }
         } else if is_replan {
             format!("Re-planned lobby time: {}", time_str)

@@ -134,6 +134,30 @@ pub async fn query_server_with_retry(ip: &str, port: u16) -> Result<L4D2ServerIn
 	Err(Status::ServiceUnavailable)
 }
 
+/// Query only the L4D2 server name without retries or cache.
+///
+/// This helper is intended for low-latency, best-effort lookups where the
+/// caller provides its own timeout policy.
+pub async fn query_server_name(ip: &str, port: u16) -> Result<String, Status> {
+	let parsed_ip: IpAddr = ip.parse().map_err(|_| Status::BadRequest)?;
+
+	let query_result = tokio::task::spawn_blocking(move || {
+		l4d2::query(&parsed_ip, Some(port))
+	}).await;
+
+	match query_result {
+		Ok(Ok(response)) => Ok(response.name),
+		Ok(Err(e)) => {
+			eprintln!("Name query failed: {}", e);
+			Err(Status::ServiceUnavailable)
+		}
+		Err(e) => {
+			eprintln!("Name query spawn error: {}", e);
+			Err(Status::ServiceUnavailable)
+		}
+	}
+}
+
 #[get("/<ip>/<port>")]
 pub async fn live_server_info(ip: String, port: u16) -> Result<Json<L4D2ServerInfo>, Status> {
 	query_server_with_retry(&ip, port).await

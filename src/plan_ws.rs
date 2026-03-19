@@ -8,6 +8,8 @@ use rocket_ws::{WebSocket, Message};
 use tokio::sync::broadcast;
 #[cfg(feature = "rest_api")]
 use rocket::futures::{SinkExt, StreamExt};
+#[cfg(feature = "rest_api")]
+use std::net::IpAddr;
 
 /// WebSocket endpoint for receiving plan timestamps and CLEAR messages
 /// 
@@ -47,11 +49,18 @@ use rocket::futures::{SinkExt, StreamExt};
 /// ```
 #[cfg(feature = "rest_api")]
 #[get("/plan")]
-pub fn plan_timestamp_stream(ws: WebSocket) -> rocket_ws::Channel<'static> {
+pub fn plan_timestamp_stream(ws: WebSocket, client_ip: Option<IpAddr>) -> rocket_ws::Channel<'static> {
     ws.channel(move |stream| {
         Box::pin(async move {
             // Split stream into sender and receiver for bidirectional communication
             let (mut ws_sender, mut ws_receiver) = stream.split();
+            let (targeted_connection_id, mut targeted_rx) = match client_ip {
+                Some(ip) => {
+                    let (connection_id, rx) = crate::steam_bot::plan_broadcast::register_targeted_connection(ip);
+                    (Some(connection_id), Some(rx))
+                }
+                None => (None, None),
+            };
             
             // Get a receiver from the broadcast channel
             let mut rx = crate::steam_bot::plan_broadcast::get_receiver();
@@ -61,7 +70,16 @@ pub fn plan_timestamp_stream(ws: WebSocket) -> rocket_ws::Channel<'static> {
             
             // Send current reservation state if one exists and hasn't expired
             // This ensures clients that connect after a reservation is set will receive it
-            if let Some(timestamp) = crate::steam_bot::plan_broadcast::get_current_timestamp() {
+            if let Some(timestamp) = client_ip
+                .and_then(crate::steam_bot::plan_broadcast::get_targeted_timestamp_for_ip)
+            {
+                let current_time = chrono::Utc::now().timestamp();
+                if current_time < timestamp {
+                    ws_sender.send(Message::Text(format!("SET {}", timestamp))).await?;
+                } else {
+                    ws_sender.send(Message::Text("CLEAR".into())).await?;
+                }
+            } else if let Some(timestamp) = crate::steam_bot::plan_broadcast::get_current_timestamp() {
                 let current_time = chrono::Utc::now().timestamp();
                 if current_time < timestamp {
                     // Timestamp is still valid (not expired)
@@ -116,6 +134,12 @@ pub fn plan_timestamp_stream(ws: WebSocket) -> rocket_ws::Channel<'static> {
                     result = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv()) => {
                         match result {
                             Ok(Ok(message)) => {
+                                if let Some(ip) = client_ip {
+                                    if crate::steam_bot::plan_broadcast::has_targeted_timestamp(ip) {
+                                        continue;
+                                    }
+                                }
+
                                 // Messages are already formatted as "SET <timestamp>" or "CLEAR"
                                 if let Err(e) = ws_sender.send(Message::Text(message)).await {
                                     eprintln!("Failed to send broadcast message: {}", e);
@@ -138,7 +162,29 @@ pub fn plan_timestamp_stream(ws: WebSocket) -> rocket_ws::Channel<'static> {
                             }
                         }
                     }
+                    targeted_message = async {
+                        match &mut targeted_rx {
+                            Some(rx) => rx.recv().await,
+                            None => None,
+                        }
+                    } => {
+                        match targeted_message {
+                            Some(message) => {
+                                if let Err(e) = ws_sender.send(Message::Text(message)).await {
+                                    eprintln!("Failed to send targeted message: {}", e);
+                                    break;
+                                }
+                            }
+                            None => {
+                                // No targeted receiver for this connection
+                            }
+                        }
+                    }
                 }
+            }
+
+            if let (Some(ip), Some(connection_id)) = (client_ip, targeted_connection_id) {
+                crate::steam_bot::plan_broadcast::unregister_targeted_connection(ip, connection_id);
             }
             
             Ok(())

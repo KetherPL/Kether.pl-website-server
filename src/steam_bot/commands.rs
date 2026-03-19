@@ -795,6 +795,12 @@ fn time_to_unix_timestamp(hours: u8, minutes: u8) -> Result<i64, String> {
 /// Converts a time string to Unix timestamp and outputs it to console and chat.
 struct PlanCommand;
 
+struct PlanArgs<'a> {
+    time_str: &'a str,
+    server_id: Option<u8>,
+    clear: bool,
+}
+
 #[async_trait]
 impl CommandHandler for PlanCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
@@ -806,7 +812,7 @@ impl CommandHandler for PlanCommand {
             name: "plan",
             aliases: &["p"],
             description: "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-            usage: Some("!plan <time> | !plan clear"),
+            usage: Some("!plan <time> [1|2] | !plan clear"),
         };
         &METADATA
     }
@@ -817,31 +823,91 @@ inventory::submit! {
         "plan",
         &["p"],
         "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-        Some("!plan <time> | !plan clear"),
+        Some("!plan <time> [1|2] | !plan clear"),
         || Box::new(PlanCommand)
     )
 }
 
 impl PlanCommand {
+    fn usage_hint() -> &'static str {
+        "!plan <time> [1|2] | !plan clear"
+    }
+
+    fn parse_args(args: &str) -> Result<PlanArgs<'_>, String> {
+        let trimmed = args.trim();
+        if trimmed.is_empty() {
+            return Err(format!(
+                "Usage: {} (e.g., !plan 19:00, !plan 18.30, !plan 16, or !plan 19:00 2)",
+                Self::usage_hint()
+            ));
+        }
+
+        if trimmed.eq_ignore_ascii_case("clear") || trimmed == "-1" {
+            return Ok(PlanArgs {
+                time_str: "",
+                server_id: None,
+                clear: true,
+            });
+        }
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        match parts.as_slice() {
+            [time_str] => Ok(PlanArgs {
+                time_str,
+                server_id: None,
+                clear: false,
+            }),
+            [time_str, "1"] => Ok(PlanArgs {
+                time_str,
+                server_id: Some(1),
+                clear: false,
+            }),
+            [time_str, "2"] => Ok(PlanArgs {
+                time_str,
+                server_id: Some(2),
+                clear: false,
+            }),
+            [_, _] => Err(format!(
+                "Invalid server id. Usage: {}",
+                Self::usage_hint()
+            )),
+            _ => Err(format!(
+                "Invalid arguments. Usage: {}",
+                Self::usage_hint()
+            )),
+        }
+    }
+
+    fn selected_server_ip(server_id: u8) -> Result<String, String> {
+        let ip = registry::config()
+            .server_by_id(server_id)
+            .map(|(ip, _)| ip.to_string())
+            .ok_or_else(|| format!("Server {} is not configured.", server_id))?;
+
+        ip.parse::<std::net::IpAddr>()
+            .map_err(|_| format!("Server {} has an invalid IP configuration.", server_id))?;
+
+        Ok(ip)
+    }
+
     /// Internal implementation of the plan command logic
     /// 
     /// This method is shared between execute() and execute_async_owned() to avoid code duplication.
     fn execute_plan(args: &str) -> String {
-        // Check if time argument is provided
-        let time_str = args.trim();
-        if time_str.is_empty() {
-            return "Usage: !plan <time> (e.g., !plan 19:00, !plan 18.30, or !plan 16) or !plan clear".to_string();
-        }
+        let parsed_args = match Self::parse_args(args) {
+            Ok(parsed_args) => parsed_args,
+            Err(error) => return error,
+        };
         
         // Check for clear command
-        if time_str.eq_ignore_ascii_case("clear") || time_str == "-1" {
+        if parsed_args.clear {
             #[cfg(feature = "rest_api")]
             crate::steam_bot::plan_broadcast::clear_reservation();
             return "Reservation cleared.".to_string();
         }
         
         // Parse the time string
-        let (hours, minutes) = match parse_time_string(time_str) {
+        let (hours, minutes) = match parse_time_string(parsed_args.time_str) {
             Ok(parsed) => parsed,
             Err(e) => return e,
         };
@@ -859,7 +925,13 @@ impl PlanCommand {
         let is_replan = {
             #[cfg(feature = "rest_api")]
             {
-                crate::steam_bot::plan_broadcast::get_current_timestamp().is_some()
+                match parsed_args.server_id {
+                    Some(server_id) => match Self::selected_server_ip(server_id) {
+                        Ok(ip) => crate::steam_bot::plan_broadcast::get_targeted_timestamp(&ip).is_some(),
+                        Err(error) => return error,
+                    },
+                    None => crate::steam_bot::plan_broadcast::get_current_timestamp().is_some(),
+                }
             }
             #[cfg(not(feature = "rest_api"))]
             {
@@ -869,13 +941,30 @@ impl PlanCommand {
         
         // Set reservation timestamp (this also broadcasts "SET <timestamp>" and starts expiration checker)
         #[cfg(feature = "rest_api")]
-        crate::steam_bot::plan_broadcast::set_reservation_timestamp(timestamp);
+        {
+            if let Some(server_id) = parsed_args.server_id {
+                let target_ip = match Self::selected_server_ip(server_id) {
+                    Ok(ip) => ip,
+                    Err(error) => return error,
+                };
+
+                crate::steam_bot::plan_broadcast::set_targeted_reservation_timestamp(&target_ip, timestamp);
+            } else {
+                crate::steam_bot::plan_broadcast::set_reservation_timestamp(timestamp);
+            }
+        }
         
         // Convert to CET time format
         let time_str = unix_timestamp_to_cet_time(timestamp);
         
         // Return formatted message
-        if is_replan {
+        if let Some(server_id) = parsed_args.server_id {
+            if is_replan {
+                format!("Re-planned lobby time for server {}: {}", server_id, time_str)
+            } else {
+                format!("Planned lobby time for server {}: {} [mention=all]@all[/mention]", server_id, time_str)
+            }
+        } else if is_replan {
             format!("Re-planned lobby time: {}", time_str)
         } else {
             format!("Planned lobby time: {} [mention=all]@all[/mention]", time_str)

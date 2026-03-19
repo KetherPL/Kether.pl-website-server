@@ -322,6 +322,21 @@ commands_without_mention = false
 			Some((self.server2_ip(), self.server2_port()))
 		}
 	}
+
+	/// Get a configured L4D2 server endpoint by numeric id
+	///
+	/// # Arguments
+	/// * `server_id` - `1` for the primary server, `2` for the secondary server
+	///
+	/// # Returns
+	/// `Some((ip, port))` when the requested server is configured, otherwise `None`
+	pub fn server_by_id(&self, server_id: u8) -> Option<(&str, u16)> {
+		match server_id {
+			1 => self.primary_server(),
+			2 => self.secondary_server(),
+			_ => None,
+		}
+	}
 }
 
 /// Gets the directory containing the current executable

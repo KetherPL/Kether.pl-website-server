@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use once_cell::sync::OnceCell;
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::net::IpAddr;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 
 /// Global broadcast channel for plan timestamps and CLEAR messages
 /// 
@@ -15,6 +20,22 @@ static LAST_TIMESTAMP: OnceCell<Arc<Mutex<Option<i64>>>> = OnceCell::new();
 
 /// Stores the handle for the expiration checker task
 static EXPIRATION_TASK: OnceCell<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>> = OnceCell::new();
+
+type TargetedConnections = HashMap<IpAddr, HashMap<u64, mpsc::UnboundedSender<String>>>;
+type TargetedTimestamps = HashMap<IpAddr, i64>;
+type TargetedTasks = HashMap<IpAddr, tokio::task::JoinHandle<()>>;
+
+/// Stores targeted WebSocket connections keyed by direct peer IP.
+static TARGETED_CONNECTIONS: OnceCell<Arc<Mutex<TargetedConnections>>> = OnceCell::new();
+
+/// Stores the last targeted reservation timestamp per IP.
+static TARGETED_TIMESTAMPS: OnceCell<Arc<Mutex<TargetedTimestamps>>> = OnceCell::new();
+
+/// Stores expiration tasks for targeted reservations keyed by IP.
+static TARGETED_EXPIRATION_TASKS: OnceCell<Arc<Mutex<TargetedTasks>>> = OnceCell::new();
+
+/// Generates unique ids for registered WebSocket connections.
+static NEXT_CONNECTION_ID: OnceCell<AtomicU64> = OnceCell::new();
 
 /// Initializes the broadcast channel for plan timestamps
 /// 
@@ -34,6 +55,18 @@ pub fn init_broadcaster() -> broadcast::Receiver<String> {
     // Initialize state tracking
     LAST_TIMESTAMP.set(Arc::new(Mutex::new(None))).expect("Already initialized");
     EXPIRATION_TASK.set(Arc::new(Mutex::new(None))).expect("Already initialized");
+    TARGETED_CONNECTIONS
+        .set(Arc::new(Mutex::new(HashMap::new())))
+        .expect("Already initialized");
+    TARGETED_TIMESTAMPS
+        .set(Arc::new(Mutex::new(HashMap::new())))
+        .expect("Already initialized");
+    TARGETED_EXPIRATION_TASKS
+        .set(Arc::new(Mutex::new(HashMap::new())))
+        .expect("Already initialized");
+    NEXT_CONNECTION_ID
+        .set(AtomicU64::new(1))
+        .expect("Already initialized");
     
     rx
 }
@@ -140,6 +173,51 @@ pub fn clear_reservation() {
     // Broadcast "CLEAR" message
     if let Some(tx) = PLAN_BROADCASTER.get() {
         let _ = tx.send("CLEAR".to_string()); // Ignore errors if no receivers
+    }
+}
+
+#[cfg(feature = "rest_api")]
+fn current_global_message() -> String {
+    match get_current_timestamp() {
+        Some(timestamp) if chrono::Utc::now().timestamp() < timestamp => format!("SET {}", timestamp),
+        _ => "CLEAR".to_string(),
+    }
+}
+
+#[cfg(feature = "rest_api")]
+fn parse_target_ip(ip: &str) -> Option<IpAddr> {
+    ip.parse().ok()
+}
+
+#[cfg(feature = "rest_api")]
+fn send_targeted_message(target_ip: IpAddr, message: String) {
+    let Some(connections) = TARGETED_CONNECTIONS.get() else {
+        return;
+    };
+
+    let mut stale_connection_ids = Vec::new();
+    let mut guard = match connections.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("Warning: Mutex poisoned when sending targeted message: {}", e);
+            e.into_inner()
+        }
+    };
+
+    if let Some(senders) = guard.get_mut(&target_ip) {
+        for (&connection_id, sender) in senders.iter() {
+            if sender.send(message.clone()).is_err() {
+                stale_connection_ids.push(connection_id);
+            }
+        }
+
+        for connection_id in stale_connection_ids {
+            senders.remove(&connection_id);
+        }
+
+        if senders.is_empty() {
+            guard.remove(&target_ip);
+        }
     }
 }
 
@@ -252,6 +330,87 @@ fn start_expiration_checker(timestamp: i64) {
     println!("Expiration checker task spawned and stored");
 }
 
+#[cfg(feature = "rest_api")]
+fn start_targeted_expiration_checker(target_ip: IpAddr, timestamp: i64) {
+    let timestamps = TARGETED_TIMESTAMPS
+        .get()
+        .expect("TARGETED_TIMESTAMPS not initialized")
+        .clone();
+    let tasks = TARGETED_EXPIRATION_TASKS
+        .get()
+        .expect("TARGETED_EXPIRATION_TASKS not initialized")
+        .clone();
+    let tasks_for_closure = tasks.clone();
+
+    let rt_handle = match tokio::runtime::Handle::try_current() {
+        Ok(handle) => handle,
+        Err(e) => {
+            eprintln!("Error: Cannot spawn targeted expiration checker task - not in tokio runtime: {}", e);
+            return;
+        }
+    };
+
+    let handle = rt_handle.spawn(async move {
+        loop {
+            let current_time = chrono::Utc::now().timestamp();
+            if current_time >= timestamp {
+                let mut should_clear = false;
+                {
+                    let mut guard = match timestamps.lock() {
+                        Ok(guard) => guard,
+                        Err(e) => {
+                            eprintln!("Warning: Mutex poisoned in targeted expiration checker: {}", e);
+                            e.into_inner()
+                        }
+                    };
+
+                    if guard.get(&target_ip).copied() == Some(timestamp) {
+                        guard.remove(&target_ip);
+                        should_clear = true;
+                    }
+                }
+
+                {
+                    let mut guard = match tasks_for_closure.lock() {
+                        Ok(guard) => guard,
+                        Err(e) => {
+                            eprintln!("Warning: Mutex poisoned when cleaning targeted expiration task: {}", e);
+                            e.into_inner()
+                        }
+                    };
+                    guard.remove(&target_ip);
+                }
+
+                if should_clear {
+                    send_targeted_message(target_ip, current_global_message());
+                }
+
+                break;
+            }
+
+            let time_until_expiry = timestamp - current_time;
+            let wait_duration = if time_until_expiry > 0 && time_until_expiry < 60 {
+                time_until_expiry
+            } else {
+                60
+            };
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(wait_duration as u64)).await;
+        }
+    });
+
+    let mut guard = match tasks.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("Warning: Mutex poisoned when storing targeted task handle: {}", e);
+            e.into_inner()
+        }
+    };
+    if let Some(previous_handle) = guard.insert(target_ip, handle) {
+        previous_handle.abort();
+    }
+}
+
 
 /// Gets the current reservation timestamp, if any
 /// 
@@ -280,6 +439,136 @@ pub fn get_current_timestamp() -> Option<i64> {
     } else {
         None
     }
+}
+
+/// Gets the current targeted reservation timestamp for a configured IP string.
+#[cfg(feature = "rest_api")]
+pub fn get_targeted_timestamp(ip: &str) -> Option<i64> {
+    let parsed_ip = parse_target_ip(ip)?;
+    get_targeted_timestamp_for_ip(parsed_ip)
+}
+
+/// Gets the current targeted reservation timestamp for a direct peer IP.
+#[cfg(feature = "rest_api")]
+pub fn get_targeted_timestamp_for_ip(target_ip: IpAddr) -> Option<i64> {
+    has_targeted_timestamp(target_ip).then(|| {
+        TARGETED_TIMESTAMPS
+            .get()
+            .and_then(|timestamps| timestamps.lock().ok())
+            .and_then(|guard| guard.get(&target_ip).copied())
+    }).flatten()
+}
+
+/// Returns whether an IP currently has an active targeted reservation.
+#[cfg(feature = "rest_api")]
+pub fn has_targeted_timestamp(target_ip: IpAddr) -> bool {
+    let Some(timestamps) = TARGETED_TIMESTAMPS.get() else {
+        return false;
+    };
+
+    let mut guard = match timestamps.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("Warning: Mutex poisoned when checking targeted timestamp: {}", e);
+            e.into_inner()
+        }
+    };
+
+    match guard.get(&target_ip).copied() {
+        Some(timestamp) if chrono::Utc::now().timestamp() < timestamp => true,
+        Some(_) => {
+            guard.remove(&target_ip);
+            false
+        }
+        None => false,
+    }
+}
+
+/// Registers a WebSocket connection for targeted plan messages.
+#[cfg(feature = "rest_api")]
+pub fn register_targeted_connection(target_ip: IpAddr) -> (u64, mpsc::UnboundedReceiver<String>) {
+    let connection_id = NEXT_CONNECTION_ID
+        .get()
+        .expect("NEXT_CONNECTION_ID not initialized")
+        .fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let connections = TARGETED_CONNECTIONS
+        .get()
+        .expect("TARGETED_CONNECTIONS not initialized");
+    let mut guard = match connections.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("Warning: Mutex poisoned when registering targeted connection: {}", e);
+            e.into_inner()
+        }
+    };
+
+    guard
+        .entry(target_ip)
+        .or_insert_with(HashMap::new)
+        .insert(connection_id, tx);
+
+    (connection_id, rx)
+}
+
+/// Unregisters a targeted WebSocket connection.
+#[cfg(feature = "rest_api")]
+pub fn unregister_targeted_connection(target_ip: IpAddr, connection_id: u64) {
+    let Some(connections) = TARGETED_CONNECTIONS.get() else {
+        return;
+    };
+
+    let mut guard = match connections.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("Warning: Mutex poisoned when unregistering targeted connection: {}", e);
+            e.into_inner()
+        }
+    };
+
+    if let Some(senders) = guard.get_mut(&target_ip) {
+        senders.remove(&connection_id);
+        if senders.is_empty() {
+            guard.remove(&target_ip);
+        }
+    }
+}
+
+/// Sets a targeted reservation timestamp for connections matching the provided IP.
+#[cfg(feature = "rest_api")]
+pub fn set_targeted_reservation_timestamp(ip: &str, timestamp: i64) {
+    let Some(target_ip) = parse_target_ip(ip) else {
+        eprintln!("Invalid targeted reservation IP: {}", ip);
+        return;
+    };
+
+    if let Some(timestamps) = TARGETED_TIMESTAMPS.get() {
+        let mut guard = match timestamps.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when setting targeted timestamp: {}", e);
+                e.into_inner()
+            }
+        };
+        guard.insert(target_ip, timestamp);
+    }
+
+    if let Some(tasks) = TARGETED_EXPIRATION_TASKS.get() {
+        let mut guard = match tasks.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when canceling targeted task: {}", e);
+                e.into_inner()
+            }
+        };
+        if let Some(previous_handle) = guard.remove(&target_ip) {
+            previous_handle.abort();
+        }
+    }
+
+    start_targeted_expiration_checker(target_ip, timestamp);
+    send_targeted_message(target_ip, format!("SET {}", timestamp));
 }
 
 /// Gets a new receiver for the broadcast channel

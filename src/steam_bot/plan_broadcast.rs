@@ -86,6 +86,8 @@ pub fn init_broadcaster() -> broadcast::Receiver<String> {
 /// does nothing.
 #[cfg(feature = "rest_api")]
 pub fn set_reservation_timestamp(timestamp: i64) {
+    clear_all_targeted_reservations();
+
     // Store the timestamp
     if let Some(last_ts) = LAST_TIMESTAMP.get() {
         let mut ts_guard = match last_ts.lock() {
@@ -138,37 +140,7 @@ pub fn set_reservation_timestamp(timestamp: i64) {
 /// does nothing.
 #[cfg(feature = "rest_api")]
 pub fn clear_reservation() {
-    // Clear stored timestamp
-    if let Some(last_ts) = LAST_TIMESTAMP.get() {
-        let mut ts_guard = match last_ts.lock() {
-            Ok(guard) => guard,
-            Err(e) => {
-                eprintln!("Warning: Mutex poisoned when clearing timestamp: {}", e);
-                let mut guard = e.into_inner();
-                *guard = None;
-                guard
-            }
-        };
-        *ts_guard = None;
-    }
-    
-    // Cancel expiration task
-    if let Some(task_handle) = EXPIRATION_TASK.get() {
-        let mut handle_guard = match task_handle.lock() {
-            Ok(guard) => guard,
-            Err(e) => {
-                eprintln!("Warning: Mutex poisoned when canceling expiration task: {}", e);
-                let mut guard = e.into_inner();
-                if let Some(handle) = guard.take() {
-                    handle.abort();
-                }
-                guard
-            }
-        };
-        if let Some(handle) = handle_guard.take() {
-            handle.abort();
-        }
-    }
+    clear_global_state();
     
     // Broadcast "CLEAR" message
     if let Some(tx) = PLAN_BROADCASTER.get() {
@@ -187,6 +159,39 @@ fn current_global_message() -> String {
 #[cfg(feature = "rest_api")]
 fn parse_target_ip(ip: &str) -> Option<IpAddr> {
     ip.parse().ok()
+}
+
+#[cfg(feature = "rest_api")]
+fn clear_global_state() {
+    if let Some(last_ts) = LAST_TIMESTAMP.get() {
+        let mut ts_guard = match last_ts.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when clearing timestamp: {}", e);
+                let mut guard = e.into_inner();
+                *guard = None;
+                guard
+            }
+        };
+        *ts_guard = None;
+    }
+
+    if let Some(task_handle) = EXPIRATION_TASK.get() {
+        let mut handle_guard = match task_handle.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when canceling expiration task: {}", e);
+                let mut guard = e.into_inner();
+                if let Some(handle) = guard.take() {
+                    handle.abort();
+                }
+                guard
+            }
+        };
+        if let Some(handle) = handle_guard.take() {
+            handle.abort();
+        }
+    }
 }
 
 #[cfg(feature = "rest_api")]
@@ -484,6 +489,62 @@ pub fn has_targeted_timestamp(target_ip: IpAddr) -> bool {
     }
 }
 
+/// Returns whether any targeted reservation currently exists.
+#[cfg(feature = "rest_api")]
+pub fn has_any_targeted_timestamp() -> bool {
+    let Some(timestamps) = TARGETED_TIMESTAMPS.get() else {
+        return false;
+    };
+
+    let mut guard = match timestamps.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("Warning: Mutex poisoned when checking targeted timestamps: {}", e);
+            e.into_inner()
+        }
+    };
+
+    let current_time = chrono::Utc::now().timestamp();
+    guard.retain(|_, timestamp| *timestamp > current_time);
+    !guard.is_empty()
+}
+
+/// Clears all targeted reservations and notifies targeted clients.
+#[cfg(feature = "rest_api")]
+pub fn clear_all_targeted_reservations() {
+    let targeted_ips = if let Some(timestamps) = TARGETED_TIMESTAMPS.get() {
+        let mut guard = match timestamps.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when clearing targeted timestamps: {}", e);
+                e.into_inner()
+            }
+        };
+        let ips = guard.keys().copied().collect::<Vec<_>>();
+        guard.clear();
+        ips
+    } else {
+        Vec::new()
+    };
+
+    if let Some(tasks) = TARGETED_EXPIRATION_TASKS.get() {
+        let mut guard = match tasks.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when clearing targeted expiration tasks: {}", e);
+                e.into_inner()
+            }
+        };
+        for (_, handle) in guard.drain() {
+            handle.abort();
+        }
+    }
+
+    for target_ip in targeted_ips {
+        send_targeted_message(target_ip, "CLEAR".to_string());
+    }
+}
+
 /// Registers a WebSocket connection for targeted plan messages.
 #[cfg(feature = "rest_api")]
 pub fn register_targeted_connection(target_ip: IpAddr) -> (u64, mpsc::UnboundedReceiver<String>) {
@@ -542,6 +603,10 @@ pub fn set_targeted_reservation_timestamp(ip: &str, timestamp: i64) {
         eprintln!("Invalid targeted reservation IP: {}", ip);
         return;
     };
+
+    if get_current_timestamp().is_some() {
+        clear_reservation();
+    }
 
     if let Some(timestamps) = TARGETED_TIMESTAMPS.get() {
         let mut guard = match timestamps.lock() {

@@ -939,10 +939,16 @@ impl PlanCommand {
             {
                 match parsed_args.server_id {
                     Some(server_id) => match Self::selected_server_endpoint(server_id) {
-                        Ok((ip, _)) => crate::steam_bot::plan_broadcast::get_targeted_timestamp(&ip).is_some(),
+                        Ok((ip, _)) => {
+                            crate::steam_bot::plan_broadcast::get_targeted_timestamp(&ip).is_some()
+                                || crate::steam_bot::plan_broadcast::get_current_timestamp().is_some()
+                        }
                         Err(error) => return error,
                     },
-                    None => crate::steam_bot::plan_broadcast::get_current_timestamp().is_some(),
+                    None => {
+                        crate::steam_bot::plan_broadcast::get_current_timestamp().is_some()
+                            || crate::steam_bot::plan_broadcast::has_any_targeted_timestamp()
+                    }
                 }
             }
             #[cfg(not(feature = "rest_api"))]

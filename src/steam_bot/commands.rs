@@ -622,10 +622,10 @@ fn parse_colon_format(trimmed: &str) -> Result<Option<(u8, u8)>, String> {
         Some(pos) => pos,
         None => return Ok(None),
     };
-    
+
     let hours_str = &trimmed[..colon_pos];
     let after_colon = &trimmed[colon_pos + 1..];
-    // Take only the first two parts (HH:MM), ignore seconds if present
+    // Take only the first two parts (HH:MM), ignore everything after the minutes (e.g. seconds, milliseconds, etc.).
     let minutes_str = if let Some(second_colon_pos) = after_colon.find(':') {
         &after_colon[..second_colon_pos]
     } else {
@@ -655,10 +655,10 @@ fn parse_dot_format(trimmed: &str) -> Result<Option<(u8, u8)>, String> {
         Some(pos) => pos,
         None => return Ok(None),
     };
-    
+
     let hours_str = &trimmed[..dot_pos];
     let after_dot = &trimmed[dot_pos + 1..];
-    // Take only the first two parts (HH.MM), ignore seconds if present
+    // Take only the first two parts (HH.MM), ignore everything after the minutes (e.g. seconds, milliseconds, etc.).
     let minutes_str = if let Some(second_dot_pos) = after_dot.find('.') {
         &after_dot[..second_dot_pos]
     } else {
@@ -795,6 +795,7 @@ fn time_to_unix_timestamp(hours: u8, minutes: u8) -> Result<i64, String> {
 /// Converts a time string to Unix timestamp and outputs it to console and chat.
 struct PlanCommand;
 
+#[derive(Debug)]
 struct PlanArgs<'a> {
     time_str: &'a str,
     server_id: Option<u8>,
@@ -867,10 +868,16 @@ impl PlanCommand {
                 server_id: Some(2),
                 clear: false,
             }),
-            [_, _] => Err(format!(
-                "Invalid server id. Usage: {}",
-                Self::usage_hint()
-            )),
+            [time_str, _] => {
+                if parse_time_string(time_str).is_ok() {
+                    Err(format!(
+                        "Invalid server id. Usage: {}",
+                        Self::usage_hint()
+                    ))
+                } else {
+                    Err("Invalid time format. Use HH:MM, HH.MM, or HH (e.g., 19:00, 18.30, or 16)".to_string())
+                }
+            }
             _ => Err(format!(
                 "Invalid arguments. Usage: {}",
                 Self::usage_hint()
@@ -1045,6 +1052,26 @@ mod tests {
         assert!(parse_time_string("12:60").is_err());
         assert!(parse_time_string("abc").is_err());
         assert!(parse_time_string("").is_err());
+    }
+
+    #[test]
+    fn test_parse_time_string_ignores_suffix_after_minutes() {
+        assert_eq!(parse_time_string("18:30:30").unwrap(), (18, 30));
+        assert_eq!(parse_time_string("18:30:21:37:666:2137").unwrap(), (18, 30));
+        assert_eq!(parse_time_string("18:30:*6").unwrap(), (18, 30));
+        assert_eq!(parse_time_string("18.30.30").unwrap(), (18, 30));
+    }
+
+    #[test]
+    fn test_plan_args_invalid_second_token_after_bad_time() {
+        let error = PlanCommand::parse_args("jeszcze jak").unwrap_err();
+        assert!(error.contains("Invalid time format"));
+    }
+
+    #[test]
+    fn test_plan_args_invalid_server_id_after_good_time() {
+        let error = PlanCommand::parse_args("18:30 abc").unwrap_err();
+        assert!(error.contains("Invalid server id"));
     }
 
     #[test]

@@ -239,18 +239,18 @@ async fn directory_listing_impl(path: PathBuf) -> Result<HtmlResponse, rocket::h
     if let Ok(dir_entries) = fs::read_dir(&full_path).await {
         let entries_stream: Vec<_> = dir_entries.collect().await;
         for entry_result in entries_stream {
-            if let Ok(entry) = entry_result {
-                if let Ok(metadata) = entry.metadata().await {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let is_dir = metadata.is_dir();
-                    let size = if is_dir { None } else { Some(metadata.len()) };
-                    
-                    entries.push(FileEntry {
-                        name,
-                        is_dir,
-                        size,
-                    });
-                }
+            if let Ok(entry) = entry_result
+                && let Ok(metadata) = entry.metadata().await
+            {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let is_dir = metadata.is_dir();
+                let size = if is_dir { None } else { Some(metadata.len()) };
+                
+                entries.push(FileEntry {
+                    name,
+                    is_dir,
+                    size,
+                });
             }
         }
     }

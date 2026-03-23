@@ -119,7 +119,7 @@ impl SteamBotService {
         // Start message listener
         let _listener_handle = crate::steam_bot::listener::start_message_listener(bot.clone());
 
-        let mut health_check_interval = tokio::time::interval(Duration::from_secs(900)); // Every 15 minutes
+        let mut health_check_interval = tokio::time::interval(Duration::from_mins(15));
 
         loop {
             tokio::select! {

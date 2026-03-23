@@ -27,7 +27,7 @@ impl ConnectionManager {
     fn should_perform_health_check(last_check: Option<Instant>) -> bool {
         let now = Instant::now();
         last_check
-            .map(|last| now.duration_since(last).as_secs() >= 300)
+            .map(|last| now.duration_since(last) >= Duration::from_mins(5))
             .unwrap_or(true)
     }
 

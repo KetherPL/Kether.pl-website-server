@@ -118,15 +118,15 @@ pub async fn query_server_with_retry(ip: &str, port: u16) -> Result<L4D2ServerIn
 	}
 	
 	// All retries failed - check cache
-	if let Ok(cache) = get_cache().read() {
-		if let Some((cached_info, cached_time)) = cache.get(&(parsed_ip, port)) {
-			let age = Instant::now().duration_since(*cached_time);
-			if age.as_secs() < CACHE_TTL_SECS {
-				eprintln!("Query failed, returning cached data (age: {}s)", age.as_secs());
-				return Ok(cached_info.clone());
-			} else {
-				eprintln!("Query failed and cache is too old (age: {}s)", age.as_secs());
-			}
+	if let Ok(cache) = get_cache().read()
+		&& let Some((cached_info, cached_time)) = cache.get(&(parsed_ip, port))
+	{
+		let age = Instant::now().duration_since(*cached_time);
+		if age.as_secs() < CACHE_TTL_SECS {
+			eprintln!("Query failed, returning cached data (age: {}s)", age.as_secs());
+			return Ok(cached_info.clone());
+		} else {
+			eprintln!("Query failed and cache is too old (age: {}s)", age.as_secs());
 		}
 	}
 	

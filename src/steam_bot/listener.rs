@@ -16,7 +16,7 @@ const LISTENER_RETRY_DELAY_SECS: u64 = 5;
 
 /// Health check interval for proactive connection monitoring
 /// Matches the interval used in ConnectionManager::ensure_healthy()
-const HEALTH_CHECK_INTERVAL_SECS: u64 = 300; // 5 minutes
+const HEALTH_CHECK_INTERVAL_MINS: u64 = 5;
 
 /// Starts the message listener task that listens for incoming Steam chat messages
 /// and processes commands when the bot is mentioned.
@@ -48,7 +48,7 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
     // Use ensure_healthy() which properly handles connection state and recovery
     let bot_for_health_check = bot.clone();
     tokio::spawn(async move {
-        let mut health_check_interval = tokio::time::interval(Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS));
+        let mut health_check_interval = tokio::time::interval(Duration::from_mins(HEALTH_CHECK_INTERVAL_MINS));
         health_check_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         
         loop {
@@ -109,10 +109,10 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                 // Connection is ready, but validate session before proceeding
                 if !validate_session(&bot).await {
                     eprintln!("Connection state is Connected but session is not available, attempting recovery...");
-                    if let Some(config) = registry::config_opt() {
-                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await {
-                            eprintln!("Failed to recover session: {}", e);
-                        }
+                    if let Some(config) = registry::config_opt()
+                        && let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await
+                    {
+                        eprintln!("Failed to recover session: {}", e);
                     }
                     wait_before_retry().await;
                     continue;
@@ -150,10 +150,10 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                 // Validate session is still valid after creating client
                 if !validate_session(&bot).await {
                     eprintln!("Session became invalid after creating client, attempting recovery...");
-                    if let Some(config) = registry::config_opt() {
-                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await {
-                            eprintln!("Failed to recover: {}", e);
-                        }
+                    if let Some(config) = registry::config_opt()
+                        && let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await
+                    {
+                        eprintln!("Failed to recover: {}", e);
                     }
                     wait_before_retry().await;
                     continue;
@@ -479,10 +479,10 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
                 }
                 
                 // Delete the placeholder message if we have its PreprocessedMessage
-                if let Some(preprocessed) = placeholder_preprocessed {
-                    if let Err(e) = MessageSender::delete_message_global(chat_group_id, chat_id, preprocessed).await {
-                        eprintln!("Failed to delete placeholder message: {}", e);
-                    }
+                if let Some(preprocessed) = placeholder_preprocessed
+                    && let Err(e) = MessageSender::delete_message_global(chat_group_id, chat_id, preprocessed).await
+                {
+                    eprintln!("Failed to delete placeholder message: {}", e);
                 }
             });
         }

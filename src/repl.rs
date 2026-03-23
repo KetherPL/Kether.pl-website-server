@@ -109,16 +109,16 @@ pub async fn start_key_listener() -> Result<(), String> {
         let key_detected = tokio::task::spawn_blocking(move || {
             loop {
                 // Poll for events with a timeout to avoid blocking indefinitely
-                if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
-                    if let Ok(Event::Key(key_event)) = event::read() {
-                        // Only process key press events (not key release)
-                        if key_event.kind == KeyEventKind::Press {
-                            match key_event.code {
-                                KeyCode::Char('c') | KeyCode::Char('C') => {
-                                    return true;
-                                }
-                                _ => {}
+                if let Ok(true) = event::poll(std::time::Duration::from_millis(100))
+                    && let Ok(Event::Key(key_event)) = event::read()
+                {
+                    // Only process key press events (not key release)
+                    if key_event.kind == KeyEventKind::Press {
+                        match key_event.code {
+                            KeyCode::Char('c') | KeyCode::Char('C') => {
+                                return true;
                             }
+                            _ => {}
                         }
                     }
                 }

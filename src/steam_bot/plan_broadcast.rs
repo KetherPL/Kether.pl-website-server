@@ -135,8 +135,9 @@ pub fn set_reservation_timestamp(timestamp: i64) {
 
 /// Clears the reservation and broadcasts "CLEAR" message
 /// 
-/// This function clears the stored timestamp, cancels the expiration task,
-/// and broadcasts "CLEAR" to all WebSocket clients.
+/// This function clears **both** the global plan and **all** per-IP targeted plans,
+/// cancels expiration tasks, notifies targeted WebSocket clients, and broadcasts
+/// `"CLEAR"` on the global channel (so non-targeted subscribers also reset).
 /// 
 /// # Note
 /// This function gracefully handles the case where the broadcaster hasn't been
@@ -144,8 +145,9 @@ pub fn set_reservation_timestamp(timestamp: i64) {
 /// does nothing.
 #[cfg(feature = "rest_api")]
 pub fn clear_reservation() {
+    clear_all_targeted_reservations();
     clear_global_state();
-    
+
     // Broadcast "CLEAR" message
     if let Some(tx) = PLAN_BROADCASTER.get() {
         let _ = tx.send("CLEAR".to_string()); // Ignore errors if no receivers

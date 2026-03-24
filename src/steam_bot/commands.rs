@@ -808,7 +808,7 @@ impl CommandHandler for PlanCommand {
             name: "plan",
             aliases: &["p"],
             description: "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-            usage: Some("!plan <time> [1|2] | !plan clear"),
+            usage: Some("!plan <time> [1|2] | !plan clear [1|2]"),
         };
         &METADATA
     }
@@ -819,35 +819,49 @@ inventory::submit! {
         "plan",
         &["p"],
         "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-        Some("!plan <time> [1|2] | !plan clear"),
+        Some("!plan <time> [1|2] | !plan clear [1|2]"),
         || Box::new(PlanCommand)
     )
 }
 
 impl PlanCommand {
     fn usage_hint() -> &'static str {
-        "!plan <time> [1|2] | !plan clear"
+        "!plan <time> [1|2] | !plan clear [1|2]"
     }
 
     fn parse_args(args: &str) -> Result<PlanArgs<'_>, String> {
         let trimmed = args.trim();
         if trimmed.is_empty() {
             return Err(format!(
-                "Usage: {} (e.g., !plan 19:00, !plan 18.30, !plan 16, or !plan 19:00 2)",
+                "Usage: {} (e.g., !plan 19:00, !plan 19:00 2, !plan clear, !plan clear 1)",
                 Self::usage_hint()
             ));
         }
 
-        if trimmed.eq_ignore_ascii_case("clear") || trimmed == "-1" {
-            return Ok(PlanArgs {
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        match parts.as_slice() {
+            [c] if c.eq_ignore_ascii_case("clear") || c.eq_ignore_ascii_case("c") || *c == "-1" => Ok(PlanArgs {
                 time_str: "",
                 server_id: None,
                 clear: true,
-            });
-        }
-
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        match parts.as_slice() {
+            }),
+            [c, sid] if c.eq_ignore_ascii_case("clear") || c.eq_ignore_ascii_case("c") => {
+                let server_id = match *sid {
+                    "1" => 1u8,
+                    "2" => 2u8,
+                    _ => {
+                        return Err(format!(
+                            "Invalid server id after clear. Usage: {}",
+                            Self::usage_hint()
+                        ));
+                    }
+                };
+                Ok(PlanArgs {
+                    time_str: "",
+                    server_id: Some(server_id),
+                    clear: true,
+                })
+            }
             [time_str] => Ok(PlanArgs {
                 time_str,
                 server_id: None,
@@ -916,7 +930,27 @@ impl PlanCommand {
         // Check for clear command
         if parsed_args.clear {
             #[cfg(feature = "rest_api")]
-            crate::steam_bot::plan_broadcast::clear_reservation();
+            {
+                if let Some(server_id) = parsed_args.server_id {
+                    let (ip, _) = match Self::selected_server_endpoint(server_id) {
+                        Ok(endpoint) => endpoint,
+                        Err(error) => return error,
+                    };
+                    let removed =
+                        crate::steam_bot::plan_broadcast::clear_targeted_reservation_for_ip(&ip);
+                    return if removed {
+                        format!("Reservation cleared for server {}.", server_id)
+                    } else if crate::steam_bot::plan_broadcast::get_current_timestamp().is_some() {
+                        format!(
+                            "No targeted reservation for server {}. A global reservation is active; use !plan clear to clear all.",
+                            server_id
+                        )
+                    } else {
+                        format!("No targeted reservation for server {}.", server_id)
+                    };
+                }
+                crate::steam_bot::plan_broadcast::clear_reservation();
+            }
             return "Reservation cleared.".to_string();
         }
         
@@ -1067,6 +1101,33 @@ mod tests {
     fn test_plan_args_invalid_server_id_after_good_time() {
         let error = PlanCommand::parse_args("18:30 abc").unwrap_err();
         assert!(error.contains("Invalid server id"));
+    }
+
+    #[test]
+    fn test_plan_args_clear_full() {
+        let args = PlanCommand::parse_args("clear").unwrap();
+        assert!(args.clear);
+        assert!(args.server_id.is_none());
+    }
+
+    #[test]
+    fn test_plan_args_clear_server_1() {
+        let args = PlanCommand::parse_args("clear 1").unwrap();
+        assert!(args.clear);
+        assert_eq!(args.server_id, Some(1));
+    }
+
+    #[test]
+    fn test_plan_args_clear_server_case_insensitive() {
+        let args = PlanCommand::parse_args("CLEAR 2").unwrap();
+        assert!(args.clear);
+        assert_eq!(args.server_id, Some(2));
+    }
+
+    #[test]
+    fn test_plan_args_clear_invalid_server_id() {
+        let err = PlanCommand::parse_args("clear 9").unwrap_err();
+        assert!(err.contains("Invalid server id after clear"));
     }
 
     #[test]

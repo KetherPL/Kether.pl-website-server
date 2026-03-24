@@ -515,6 +515,55 @@ pub fn has_any_targeted_timestamp() -> bool {
     !guard.is_empty()
 }
 
+/// Removes the targeted reservation for a single configured server IP (if any),
+/// aborts its expiration task, and pushes the correct follow-up state to clients
+/// at that IP (`CLEAR`, or the current global `SET` if a global plan is active).
+///
+/// Returns `true` if an entry existed for that IP in the targeted map (removed).
+#[cfg(feature = "rest_api")]
+pub fn clear_targeted_reservation_for_ip(ip: &str) -> bool {
+    let Some(target_ip) = parse_target_ip(ip) else {
+        return false;
+    };
+
+    let removed = if let Some(timestamps) = TARGETED_TIMESTAMPS.get() {
+        let mut guard = match timestamps.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when clearing targeted timestamp: {}", e);
+                e.into_inner()
+            }
+        };
+        guard.remove(&target_ip).is_some()
+    } else {
+        false
+    };
+
+    if let Some(tasks) = TARGETED_EXPIRATION_TASKS.get() {
+        let mut guard = match tasks.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                eprintln!("Warning: Mutex poisoned when canceling targeted expiration task: {}", e);
+                e.into_inner()
+            }
+        };
+        if let Some(handle) = guard.remove(&target_ip) {
+            handle.abort();
+        }
+    }
+
+    if removed {
+        let msg = if get_current_timestamp().is_some() {
+            current_global_message()
+        } else {
+            "CLEAR".to_string()
+        };
+        send_targeted_message(target_ip, msg);
+    }
+
+    removed
+}
+
 /// Clears all targeted reservations and notifies targeted clients.
 #[cfg(feature = "rest_api")]
 pub fn clear_all_targeted_reservations() {

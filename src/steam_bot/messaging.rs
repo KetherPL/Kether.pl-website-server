@@ -7,6 +7,9 @@ use crate::steam_bot::registry;
 use crate::steam_bot::utils::is_connection_error;
 use SC_Sub_Poster::{SendGroupMessageParams, PreprocessedMessage};
 
+/// Small delay before delete so the echoed message is committed server-side.
+const DELETE_SETTLE_DELAY_MS: u64 = 500;
+
 /// Message sender for SteamBot
 /// 
 /// This module provides functionality for sending messages to Steam group chats
@@ -139,37 +142,36 @@ impl MessageSender {
         chat_id: u64,
     ) -> Result<PreprocessedMessage, Box<dyn std::error::Error + Send + Sync>> {
         let session_guard = bot.session.lock().await;
-
-        if session_guard.is_none() {
+        let Some(ref session) = *session_guard else {
             return Err("SteamBot not fully initialized. Please login first.".into());
+        };
+
+        let params = SendGroupMessageParams::new(
+            chat_group_id,
+            chat_id,
+            message,
+        )
+        .with_echo_to_sender(true);
+        let preprocessed = session
+            .chat()
+            .send_group_message(params)
+            .await
+            .map_err(|e| format!("Failed to send message: {}", e))?;
+
+        // Extract ordinal and server_timestamp from PreprocessedMessage
+        // When echo_to_sender is enabled, send_group_message waits for the echo notification
+        // which provides both values. For deletion: server_timestamp is required, ordinal can be 0 (will be omitted).
+        let ordinal = preprocessed.ordinal.map(|o| o as u64).unwrap_or(0);
+        let server_timestamp = preprocessed.server_timestamp.map(|t| t as u64).unwrap_or(0);
+
+        // server_timestamp is required for deletion, ordinal can be 0 (it will be omitted per Steam API)
+        if server_timestamp == 0 {
+            eprintln!("Warning: Message sent but server_timestamp not available (ordinal: {}, server_timestamp: {}). Message deletion will be skipped. Ensure echo_to_sender is enabled and echo notification was received.", ordinal, server_timestamp);
+        // } else {
+        //     println!("Message sent to Steam chat (group: {}, chat: {}): {} (ordinal: {}, server_timestamp: {})", chat_group_id, chat_id, message, ordinal, server_timestamp);
         }
-        
-        if let Some(ref session) = *session_guard {
-            let params = SendGroupMessageParams::new(
-                chat_group_id,
-                chat_id,
-                message,
-            ).with_echo_to_sender(true);
-            let preprocessed = session.chat().send_group_message(params).await
-                .map_err(|e| format!("Failed to send message: {}", e))?;
-            
-            // Extract ordinal and server_timestamp from PreprocessedMessage
-            // When echo_to_sender is enabled, send_group_message waits for the echo notification
-            // which provides both values. For deletion: server_timestamp is required, ordinal can be 0 (will be omitted).
-            let ordinal = preprocessed.ordinal.map(|o| o as u64).unwrap_or(0);
-            let server_timestamp = preprocessed.server_timestamp.map(|t| t as u64).unwrap_or(0);
-            
-            // server_timestamp is required for deletion, ordinal can be 0 (it will be omitted per Steam API)
-            if server_timestamp == 0 {
-                eprintln!("Warning: Message sent but server_timestamp not available (ordinal: {}, server_timestamp: {}). Message deletion will be skipped. Ensure echo_to_sender is enabled and echo notification was received.", ordinal, server_timestamp);
-            // } else {
-            //     println!("Message sent to Steam chat (group: {}, chat: {}): {} (ordinal: {}, server_timestamp: {})", chat_group_id, chat_id, message, ordinal, server_timestamp);
-            }
-            
-            Ok(preprocessed)
-        } else {
-            Err("Steam chat client not initialized. Please login first.".into())
-        }
+
+        Ok(preprocessed)
     }
 
 
@@ -197,12 +199,11 @@ impl MessageSender {
     /// This function uses OnceCell for thread-safe access to the global SteamBot instance.
     /// The instance must be initialized by calling `main()` first.
     pub async fn send_global(message: &str) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(steam_bot) = registry::bot() {
-            let config = registry::config();
-            Self::send_with_immediate_recovery(steam_bot, message, config).await
-        } else {
-            Err("SteamBot not initialized".into())
-        }
+        let Some(steam_bot) = registry::bot() else {
+            return Err("SteamBot not initialized".into());
+        };
+        let config = registry::config();
+        Self::send_with_immediate_recovery(steam_bot, message, config).await
     }
 
     /// Sends a message to a specific chat room using the global SteamBot instance
@@ -257,12 +258,11 @@ impl MessageSender {
         chat_group_id: u64,
         chat_id: u64,
     ) -> Result<PreprocessedMessage, Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(steam_bot) = registry::bot() {
-            let config = registry::config();
-            Self::send_to_chat_with_recovery_preprocessed(steam_bot, message, chat_group_id, chat_id, config).await
-        } else {
-            Err("SteamBot not initialized".into())
-        }
+        let Some(steam_bot) = registry::bot() else {
+            return Err("SteamBot not initialized".into());
+        };
+        let config = registry::config();
+        Self::send_to_chat_with_recovery_preprocessed(steam_bot, message, chat_group_id, chat_id, config).await
     }
 
     /// Sends a message to a specific Steam group chat room with automatic recovery (returns PreprocessedMessage)
@@ -309,43 +309,41 @@ impl MessageSender {
         preprocessed: PreprocessedMessage,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let session_guard = bot.session.lock().await;
-
-        if session_guard.is_none() {
+        let Some(ref session) = *session_guard else {
             return Err("SteamBot not fully initialized. Please login first.".into());
+        };
+
+        // Extract ordinal and server_timestamp from PreprocessedMessage
+        // According to Steam API: ordinal can be omitted if 0, but server_timestamp is required
+        let ordinal = preprocessed.ordinal.map(|o| o as u64).unwrap_or(0);
+        let server_timestamp = preprocessed.server_timestamp.map(|t| t as u64).unwrap_or(0);
+
+        // server_timestamp is required, ordinal can be 0 (it will be omitted in the deletion request)
+        if server_timestamp == 0 {
+            eprintln!("Cannot delete message: server_timestamp is required but not available (ordinal: {}, server_timestamp: {})", ordinal, server_timestamp);
+            return Err(format!("Message deletion requires server_timestamp to be non-zero (ordinal: {}, server_timestamp: {})", ordinal, server_timestamp).into());
         }
-        
-        if let Some(ref session) = *session_guard {
-            // Extract ordinal and server_timestamp from PreprocessedMessage
-            // According to Steam API: ordinal can be omitted if 0, but server_timestamp is required
-            let ordinal = preprocessed.ordinal.map(|o| o as u64).unwrap_or(0);
-            let server_timestamp = preprocessed.server_timestamp.map(|t| t as u64).unwrap_or(0);
-            
-            // server_timestamp is required, ordinal can be 0 (it will be omitted in the deletion request)
-            if server_timestamp == 0 {
-                eprintln!("Cannot delete message: server_timestamp is required but not available (ordinal: {}, server_timestamp: {})", ordinal, server_timestamp);
-                return Err(format!("Message deletion requires server_timestamp to be non-zero (ordinal: {}, server_timestamp: {})", ordinal, server_timestamp).into());
-            }
-            
-            // Small delay to ensure the message is fully processed by Steam before deletion
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            
-            // Use delete_group_messages_from_preprocessed which extracts both ordinal and server_timestamp
-            // from the PreprocessedMessage objects
-            let messages = vec![preprocessed];
-            
-            session.chat().delete_group_messages_from_preprocessed(chat_group_id, chat_id, messages).await
-                .map_err(|e| {
-                    let error_str = format!("{}", e);
-                    eprintln!("Delete message error details - group: {}, chat: {}, ordinal: {}, server_timestamp: {}, error: {}", 
-                             chat_group_id, chat_id, ordinal, server_timestamp, error_str);
-                    format!("Failed to delete message (ordinal: {}, server_timestamp: {}): {}", ordinal, server_timestamp, error_str)
-                })?;
-            
-            // println!("Message deleted from Steam chat (group: {}, chat: {}, ordinal: {}, server_timestamp: {})", chat_group_id, chat_id, ordinal, server_timestamp);
-            Ok(())
-        } else {
-            Err("Steam chat client not initialized. Please login first.".into())
-        }
+
+        // Small delay to ensure the message is fully processed by Steam before deletion
+        tokio::time::sleep(tokio::time::Duration::from_millis(DELETE_SETTLE_DELAY_MS)).await;
+
+        // Use delete_group_messages_from_preprocessed which extracts both ordinal and server_timestamp
+        // from the PreprocessedMessage objects
+        let messages = vec![preprocessed];
+
+        session
+            .chat()
+            .delete_group_messages_from_preprocessed(chat_group_id, chat_id, messages)
+            .await
+            .map_err(|e| {
+                let error_str = format!("{}", e);
+                eprintln!("Delete message error details - group: {}, chat: {}, ordinal: {}, server_timestamp: {}, error: {}",
+                         chat_group_id, chat_id, ordinal, server_timestamp, error_str);
+                format!("Failed to delete message (ordinal: {}, server_timestamp: {}): {}", ordinal, server_timestamp, error_str)
+            })?;
+
+        // println!("Message deleted from Steam chat (group: {}, chat: {}, ordinal: {}, server_timestamp: {})", chat_group_id, chat_id, ordinal, server_timestamp);
+        Ok(())
     }
 
     /// Deletes a message from a Steam group chat room using the global SteamBot instance
@@ -366,11 +364,10 @@ impl MessageSender {
         chat_id: u64,
         preprocessed: PreprocessedMessage,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(steam_bot) = registry::bot() {
-            Self::delete_message(steam_bot, chat_group_id, chat_id, preprocessed).await
-        } else {
-            Err("SteamBot not initialized".into())
-        }
+        let Some(steam_bot) = registry::bot() else {
+            return Err("SteamBot not initialized".into());
+        };
+        Self::delete_message(steam_bot, chat_group_id, chat_id, preprocessed).await
     }
 }
 

@@ -304,14 +304,14 @@ async fn fastdl_not_found(req: &Request<'_>) -> Option<HtmlResponse> {
     }
     
     // If it's a directory without index.html, serve directory listing
-    if let Ok(metadata) = fs::metadata(&full_path).await {
-        if metadata.is_dir() {
-            let index_path = full_path.join("index.html");
-            if fs::metadata(&index_path).await.is_err() {
-                match directory_listing_impl(path).await {
-                    Ok(response) => return Some(response),
-                    Err(_) => return None,
-                }
+    if let Ok(metadata) = fs::metadata(&full_path).await
+        && metadata.is_dir()
+    {
+        let index_path = full_path.join("index.html");
+        if fs::metadata(&index_path).await.is_err() {
+            match directory_listing_impl(path).await {
+                Ok(response) => return Some(response),
+                Err(_) => return None,
             }
         }
     }

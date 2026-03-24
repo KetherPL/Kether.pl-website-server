@@ -208,12 +208,11 @@ impl CommandRegistry {
     /// * `Err(CommandError)` - If command execution fails
     pub async fn handle(&self, command: &str, args: &str, message: &EnhancedGroupChatMessage) -> Result<Option<String>, CommandError> {
         let command_lower = command.to_lowercase();
-        if let Some(handler) = self.handlers.get(&command_lower) {
-            let ctx = CommandContext::new(args, message);
-            Ok(Some(handler.execute(&ctx).await?))
-        } else {
-            Ok(None)
-        }
+        let Some(handler) = self.handlers.get(&command_lower) else {
+            return Ok(None);
+        };
+        let ctx = CommandContext::new(args, message);
+        Ok(Some(handler.execute(&ctx).await?))
     }
     
     /// Gets command groups with aliases and descriptions
@@ -368,25 +367,21 @@ impl StatusCommand {
     }
 
     fn configured_servers<'a>(config: &'a crate::config::Config) -> Vec<ConfiguredServer<'a>> {
-        let mut servers = Vec::new();
-
-        if let Some((ip, port)) = config.primary_server() {
-            servers.push(ConfiguredServer {
+        [
+            config.primary_server().map(|(ip, port)| ConfiguredServer {
                 id: 1,
                 ip,
                 port,
-            });
-        }
-
-        if let Some((ip, port)) = config.secondary_server() {
-            servers.push(ConfiguredServer {
+            }),
+            config.secondary_server().map(|(ip, port)| ConfiguredServer {
                 id: 2,
                 ip,
                 port,
-            });
-        }
-
-        servers
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     fn parse_args(args: &str) -> Result<StatusArgs, CommandError> {
@@ -939,19 +934,24 @@ impl PlanCommand {
         
         // Print to console
         println!("Plan command: {}:{} → Unix timestamp: {}", hours, minutes, timestamp);
-        
+
+        let targeted = match parsed_args.server_id {
+            Some(server_id) => match Self::selected_server_endpoint(server_id) {
+                Ok((ip, port)) => Some((server_id, ip, port)),
+                Err(error) => return error,
+            },
+            None => None,
+        };
+
         // Check for existing reservation before setting new one
         let is_replan = {
             #[cfg(feature = "rest_api")]
             {
-                match parsed_args.server_id {
-                    Some(server_id) => match Self::selected_server_endpoint(server_id) {
-                        Ok((ip, _)) => {
-                            crate::steam_bot::plan_broadcast::get_targeted_timestamp(&ip).is_some()
-                                || crate::steam_bot::plan_broadcast::get_current_timestamp().is_some()
-                        }
-                        Err(error) => return error,
-                    },
+                match &targeted {
+                    Some((_, ip, _)) => {
+                        crate::steam_bot::plan_broadcast::get_targeted_timestamp(ip).is_some()
+                            || crate::steam_bot::plan_broadcast::get_current_timestamp().is_some()
+                    }
                     None => {
                         crate::steam_bot::plan_broadcast::get_current_timestamp().is_some()
                             || crate::steam_bot::plan_broadcast::has_any_targeted_timestamp()
@@ -963,60 +963,55 @@ impl PlanCommand {
                 false
             }
         };
-        
+
         // Set reservation timestamp (this also broadcasts "SET <timestamp>" and starts expiration checker)
         #[cfg(feature = "rest_api")]
         {
-            if let Some(server_id) = parsed_args.server_id {
-                let target_ip = match Self::selected_server_endpoint(server_id) {
-                    Ok((ip, _)) => ip,
-                    Err(error) => return error,
-                };
-
-                crate::steam_bot::plan_broadcast::set_targeted_reservation_timestamp(&target_ip, timestamp);
-            } else {
-                crate::steam_bot::plan_broadcast::set_reservation_timestamp(timestamp);
+            match &targeted {
+                Some((_, ip, _)) => {
+                    crate::steam_bot::plan_broadcast::set_targeted_reservation_timestamp(ip, timestamp);
+                }
+                None => {
+                    crate::steam_bot::plan_broadcast::set_reservation_timestamp(timestamp);
+                }
             }
         }
-        
+
         // Convert to CET time format
         let time_str = unix_timestamp_to_cet_time(timestamp);
-        
-        // Return formatted message
-        if let Some(server_id) = parsed_args.server_id {
-            let (server_ip, server_port) = match Self::selected_server_endpoint(server_id) {
-                Ok(endpoint) => endpoint,
-                Err(error) => return error,
-            };
-            let server_name = Self::query_targeted_server_name(&server_ip, server_port).await;
 
-            if is_replan {
-                match server_name {
-                    Some(server_name) => format!(
-                        "Re-planned lobby time for server {}: {}\nServer: {} | IP: {}:{}",
-                        server_id, time_str, server_name, server_ip, server_port
-                    ),
-                    None => format!(
-                        "Re-planned lobby time for server {}: {}\nServer IP: {}:{}",
-                        server_id, time_str, server_ip, server_port
-                    ),
-                }
-            } else {
-                match server_name {
-                    Some(server_name) => format!(
-                        "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer: {} | IP: {}:{}",
-                        server_id, time_str, server_name, server_ip, server_port
-                    ),
-                    None => format!(
-                        "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer IP: {}:{}",
-                        server_id, time_str, server_ip, server_port
-                    ),
+        // Return formatted message
+        match targeted {
+            Some((server_id, server_ip, server_port)) => {
+                let server_name =
+                    Self::query_targeted_server_name(&server_ip, server_port).await;
+
+                if is_replan {
+                    match server_name {
+                        Some(server_name) => format!(
+                            "Re-planned lobby time for server {}: {}\nServer: {} | IP: {}:{}",
+                            server_id, time_str, server_name, server_ip, server_port
+                        ),
+                        None => format!(
+                            "Re-planned lobby time for server {}: {}\nServer IP: {}:{}",
+                            server_id, time_str, server_ip, server_port
+                        ),
+                    }
+                } else {
+                    match server_name {
+                        Some(server_name) => format!(
+                            "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer: {} | IP: {}:{}",
+                            server_id, time_str, server_name, server_ip, server_port
+                        ),
+                        None => format!(
+                            "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer IP: {}:{}",
+                            server_id, time_str, server_ip, server_port
+                        ),
+                    }
                 }
             }
-        } else if is_replan {
-            format!("Re-planned lobby time: {}", time_str)
-        } else {
-            format!("Planned lobby time: {} [mention=all]@all[/mention]", time_str)
+            None if is_replan => format!("Re-planned lobby time: {}", time_str),
+            None => format!("Planned lobby time: {} [mention=all]@all[/mention]", time_str),
         }
     }
 }

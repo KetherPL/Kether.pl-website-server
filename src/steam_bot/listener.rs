@@ -14,6 +14,9 @@ use tokio::time::Duration;
 /// Retry delay when the listener encounters an error
 const LISTENER_RETRY_DELAY_SECS: u64 = 5;
 
+/// How often we poll whether the bot connection generation changed (reconnect detection).
+const CONNECTION_GENERATION_POLL_SECS: u64 = 30;
+
 /// Health check interval for proactive connection monitoring
 /// Matches the interval used in ConnectionManager::ensure_healthy()
 const HEALTH_CHECK_INTERVAL_MINS: u64 = 5;
@@ -56,9 +59,9 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
             health_check_interval.tick().await;
             
             if let Some(config) = registry::config_opt() {
-                // Use ensure_healthy() which checks connection state and properly handles recovery
-                // This matches what the call-for-sub bot uses and ensures Failed state is handled
-                if let Err(e) = ConnectionManager::ensure_healthy(&bot_for_health_check, config, false).await {
+                if let Err(e) =
+                    ConnectionManager::ensure_healthy(&bot_for_health_check, config, false).await
+                {
                     eprintln!("Listener health check failed: {}", e);
                     // Continue loop even on error - don't let health check task die
                 }
@@ -134,10 +137,11 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                         }
                     };
                     
-                    if !health_ok {
-                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, false).await {
-                            eprintln!("Failed to recover: {}", e);
-                        }
+                    if !health_ok
+                        && let Err(e) =
+                            ConnectionManager::ensure_healthy(&bot, config, false).await
+                    {
+                        eprintln!("Failed to recover: {}", e);
                         wait_before_retry().await;
                         continue;
                     }
@@ -178,10 +182,11 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                         }
                     };
                     
-                    if !health_ok {
-                        if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, true).await {
-                            eprintln!("Failed to recover: {}", e);
-                        }
+                    if !health_ok
+                        && let Err(e) =
+                            ConnectionManager::ensure_healthy(&bot, config, true).await
+                    {
+                        eprintln!("Failed to recover: {}", e);
                         wait_before_retry().await;
                         continue;
                     }
@@ -336,7 +341,7 @@ async fn listen_for_messages(
     let bot_clone = bot.clone();
     let monitor_future = async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            tokio::time::sleep(Duration::from_secs(CONNECTION_GENERATION_POLL_SECS)).await;
             if bot_clone.get_generation().await != initial_generation {
                 return Err("Connection generation changed (reconnected remotely)".to_string());
             }

@@ -134,10 +134,10 @@ pub fn plan_timestamp_stream(ws: WebSocket, client_ip: Option<IpAddr>) -> rocket
                     result = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv()) => {
                         match result {
                             Ok(Ok(message)) => {
-                                if let Some(ip) = client_ip {
-                                    if crate::steam_bot::plan_broadcast::has_targeted_timestamp(ip) {
-                                        continue;
-                                    }
+                                if let Some(ip) = client_ip
+                                    && crate::steam_bot::plan_broadcast::has_targeted_timestamp(ip)
+                                {
+                                    continue;
                                 }
 
                                 // Messages are already formatted as "SET <timestamp>" or "CLEAR"

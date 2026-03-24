@@ -37,6 +37,10 @@ static TARGETED_EXPIRATION_TASKS: OnceCell<Arc<Mutex<TargetedTasks>>> = OnceCell
 /// Generates unique ids for registered WebSocket connections.
 static NEXT_CONNECTION_ID: OnceCell<AtomicU64> = OnceCell::new();
 
+/// Max sleep between expiration polls (seconds); also caps per-iteration wait when expiry is soon.
+#[cfg(feature = "rest_api")]
+const EXPIRATION_POLL_CAP_SECS: i64 = 60;
+
 /// Initializes the broadcast channel for plan timestamps
 /// 
 /// This function should be called once during application startup (typically
@@ -306,12 +310,12 @@ fn start_expiration_checker(timestamp: i64) {
                 break;
             }
             
-            // Calculate how long to wait: either until timestamp expires, or 60 seconds, whichever is shorter
+            // Calculate how long to wait: either until timestamp expires, or cap, whichever is shorter
             let time_until_expiry = timestamp - current_time;
-            let wait_duration = if time_until_expiry > 0 && time_until_expiry < 60 {
+            let wait_duration = if time_until_expiry > 0 && time_until_expiry < EXPIRATION_POLL_CAP_SECS {
                 time_until_expiry
             } else {
-                60
+                EXPIRATION_POLL_CAP_SECS
             };
             
             println!("Expiration checker: waiting {} seconds (timestamp expires in {} seconds)", wait_duration, time_until_expiry);
@@ -394,10 +398,10 @@ fn start_targeted_expiration_checker(target_ip: IpAddr, timestamp: i64) {
             }
 
             let time_until_expiry = timestamp - current_time;
-            let wait_duration = if time_until_expiry > 0 && time_until_expiry < 60 {
+            let wait_duration = if time_until_expiry > 0 && time_until_expiry < EXPIRATION_POLL_CAP_SECS {
                 time_until_expiry
             } else {
-                60
+                EXPIRATION_POLL_CAP_SECS
             };
 
             tokio::time::sleep(tokio::time::Duration::from_secs(wait_duration as u64)).await;

@@ -575,9 +575,10 @@ pub fn clear_all_targeted_reservations() {
                 e.into_inner()
             }
         };
-        let ips = guard.keys().copied().collect::<Vec<_>>();
-        guard.clear();
-        ips
+        guard
+            .extract_if(|_, _| true)
+            .map(|(ip, _)| ip)
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };

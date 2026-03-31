@@ -30,7 +30,10 @@ pub const MAX_BACKOFF_SECONDS: u64 = 60;
 /// }
 /// ```
 pub fn is_connection_error(message: &str) -> bool {
-    CONNECTION_ERROR_TOKENS.iter().any(|token| message.contains(token))
+    let lower = message.to_lowercase();
+    CONNECTION_ERROR_TOKENS
+        .iter()
+        .any(|token| lower.contains(token))
 }
 
 /// Calculates the backoff delay for reconnection attempts using exponential backoff

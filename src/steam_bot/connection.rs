@@ -262,23 +262,22 @@ impl ConnectionManager {
     /// * `Ok(())` - If connection is healthy or successfully reconnected
     /// * `Err(Box<dyn std::error::Error + Send + Sync>)` - If connection cannot be established
     pub async fn ensure_healthy(bot: &SteamBot, config: &Config, force: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Check if we need to perform a health check (every 5 minutes or if forced)
+        // Check if we need to perform a health check (every 5 minutes or if forced).
+        // Do not update `last_health_check` until recovery succeeds; otherwise a failed
+        // check suppresses the next periodic retry for 5 minutes while the bot may stay broken.
         let should_check = if force {
             true
         } else {
-            let mut last_check_guard = bot.last_health_check.lock().await;
-            let now = Instant::now();
-            let should = Self::should_perform_health_check(*last_check_guard);
-            if should {
-                *last_check_guard = Some(now);
-            }
-            should
+            let last_check_guard = bot.last_health_check.lock().await;
+            Self::should_perform_health_check(*last_check_guard)
         };
-        
+
         if should_check {
             Self::perform_health_check_with_recovery(bot, config, force).await?;
+            let mut last_check_guard = bot.last_health_check.lock().await;
+            *last_check_guard = Some(Instant::now());
         }
-        
+
         Ok(())
     }
 }

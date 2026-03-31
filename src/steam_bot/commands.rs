@@ -2,6 +2,8 @@
 
 #[cfg(feature = "server_query")]
 use crate::LiveServerInfo;
+#[cfg(feature = "server_query")]
+use futures_util::future::join_all;
 use crate::steam_bot::registry;
 use SC_Sub_Poster::EnhancedGroupChatMessage;
 use std::collections::HashMap;
@@ -508,8 +510,19 @@ impl CommandHandler for StatusCommand {
         let mut responses = Vec::new();
         let mut any_server_responded = false;
 
-        for server in servers {
-            match LiveServerInfo::query_server_with_retry(server.ip, server.port).await {
+        // Query all configured servers concurrently so e.g. `!s f` with two servers
+        // stays within ~one query's latency instead of summing both (sequential retries).
+        let query_futures = servers.iter().map(|server| {
+            let ip = server.ip;
+            let port = server.port;
+            async move {
+                LiveServerInfo::query_server_with_retry(ip, port).await
+            }
+        });
+        let query_results = join_all(query_futures).await;
+
+        for (server, query_result) in servers.iter().zip(query_results) {
+            match query_result {
                 Ok(server_info) => {
                     let body = if parsed_args.is_full {
                         Self::format_full_status(&server_info)

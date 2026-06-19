@@ -12,22 +12,22 @@ homepage = "kether.pl"
 [dependencies]
 SC_Sub_Poster = { git = "https://github.com/KetherPL/SC_Sub_Poster.git", optional = true }
 #SC_Sub_Poster = { path = "../Kether.pl-sub-poster-rust", optional = true }
-clap = { version = "4.5.32", features = ["derive", "std"] }
-colored = { version = "3.0.0", optional = true }
-gamedig = { version = "0.6.1", optional = true }
+clap = { version = "4.x", features = ["derive", "std"] }
+colored = { version = "3.x", optional = true }
+gamedig = { version = "0.9", optional = true }
 rocket = { version = "0.5.1", features = ["json"], optional = true, default-features = false }
 rocket_cors = { version = "0.6.0", optional = true }
 rocket_ws = { version = "0.1", optional = true }
-toml = { version = "0.8", optional = true }
+toml = { version = "1.x", optional = true }
 steam-rs = { version = "0.5.1", optional = true }
-tokio = { version = "1.46.1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.x", features = ["rt-multi-thread", "macros"] }
 futures-util = { version = "0.3", optional = true }
-once_cell = "1.19.0"
+once_cell = "1.x"
 smol = "2.0.2"
-reedline = "0.44"
-crossterm = "0.28"
+reedline = "0.46"
+crossterm = "0.29"
 chrono = "0.4"
-chrono-tz = "0.9"
+chrono-tz = "0.10"
 async-trait = "0.1"
 inventory = "0.3"
 

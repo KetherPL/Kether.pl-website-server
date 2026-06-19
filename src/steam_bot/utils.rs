@@ -3,7 +3,18 @@
 use tokio::time::Duration;
 
 /// Tokens that indicate connection-related errors in error messages
-pub const CONNECTION_ERROR_TOKENS: [&str; 6] = ["broken pipe", "connection", "network", "timeout", "closed", "io error"];
+pub const CONNECTION_ERROR_TOKENS: [&str; 10] = [
+    "broken pipe",
+    "connection",
+    "network",
+    "timeout",
+    "closed",
+    "io error",
+    "disconnected",
+    "connection reset",
+    "unexpected eof",
+    "stream closed",
+];
 
 /// Maximum number of reconnection attempts before giving up
 pub const RECONNECT_RETRY_LIMIT: u32 = 3;

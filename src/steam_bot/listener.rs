@@ -15,7 +15,8 @@ use tokio::time::Duration;
 const LISTENER_RETRY_DELAY_SECS: u64 = 5;
 
 /// How often we poll whether the bot connection generation changed (reconnect detection).
-const CONNECTION_GENERATION_POLL_SECS: u64 = 30;
+/// Shorter interval so a reconnection from another task replaces the stale listener sooner.
+const CONNECTION_GENERATION_POLL_SECS: u64 = 10;
 
 /// Health check interval for proactive connection monitoring
 /// Matches the interval used in ConnectionManager::ensure_healthy()
@@ -137,9 +138,11 @@ async fn run_message_listener(bot: Arc<SteamBot>) -> Result<(), Box<dyn Error + 
                         }
                     };
                     
+                    // Must force recovery: ensure_healthy(false) can no-op when a periodic check
+                    // succeeded recently, leaving us listening on a session we already know is bad.
                     if !health_ok
                         && let Err(e) =
-                            ConnectionManager::ensure_healthy(&bot, config, false).await
+                            ConnectionManager::ensure_healthy(&bot, config, true).await
                     {
                         eprintln!("Failed to recover: {}", e);
                         wait_before_retry().await;

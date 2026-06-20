@@ -62,10 +62,15 @@ This project is the backend server for the Kether.pl website, a homepage for the
         *   Steam Web API key
         *   Steam account credentials for bot functionality
         *   Steam group chat IDs for message delivery
+    *   **Hot reload:** When built with the `hot_reload` feature (included in the default `kether_meta` bundle), changes to `config.toml` are picked up automatically without restarting the process.
     *   JSON database files are automatically created in the executable directory:
         *   `cmds.json` - Server commands
         *   `binds.json` - User binds with embedded voting
         *   `bind_sgs.json` - Bind suggestions
+*   **Interactive REPL:**
+    *   While the daemon runs with `--service`, press **`C`** to open an in-process command console.
+    *   Supports restarting or stopping the daemon without leaving the `screen`/terminal session.
+    *   In-process restart reloads the REST server and SteamBot from disk (useful after changing bot credentials or chat IDs).
 *   **Command-Line Interface (CLI):**
     *   Allows querying L4D2 servers directly from the command line.
     *   Starts the RESTful server service.
@@ -88,6 +93,8 @@ This project is the backend server for the Kether.pl website, a homepage for the
 *   **tokio:** Async runtime for concurrent operations.
 *   **smol:** Async runtime for efficient file system operations in FastDL server.
 *   **once_cell:** Global state management for Steam Bot integration.
+*   **notify-debouncer-full:** File-system watching for config hot reload.
+*   **reedline / crossterm:** Interactive REPL console when running as a service.
 
 ## Getting Started
 
@@ -175,6 +182,46 @@ chat_id = 103582791429521409
 - ✅ Type-safe deserialization with serde
 - ✅ Nested sections for better organization
 - ✅ Clean, modern TOML format
+- ✅ Hot reload for most fields when `hot_reload` feature is enabled (read below)
+
+### Config hot reload
+
+With the `hot_reload` feature enabled (default in `kether_meta`), saving `config.toml` triggers an automatic reload. The server logs which fields were applied live and which require a restart.
+
+**Applied immediately (no restart needed):**
+
+* `frontend_admins`
+* `steam.web_api_key`
+* `server.ip`, `server.port`, `server2.ip`, `server2.port`
+* `steam.chat.commands_without_mention`
+
+**Require a REPL restart (`R` / `restart`) or full process restart:**
+
+* `steam.bot.username`
+* `steam.bot.password`
+* `steam.chat.group_id`
+* `steam.chat.chat_id`
+
+Hot reload updates the shared in-memory config used by REST handlers. SteamBot credentials and chat routing only take effect after a restart, because the bot must log in again and restart its message listener.
+
+## Runtime Management (REPL)
+
+When running with `--service`, the daemon includes a lightweight runtime console.
+
+### REPL console
+
+Press **`C`** (and press Enter) while the service is running to open the REPL. Type **`help`** for a command list.
+
+| Command | Aliases | Action |
+|---------|---------|--------|
+| `help` | `h` | Show available commands |
+| `quit` | `q`, `exit` | Close the REPL (daemon keeps running) |
+| `restart` | `R` | Restart REST + SteamBot **in the same process** — stays in the current terminal/`screen` session |
+| `stop` | `S` | Shut down the daemon cleanly and exit |
+
+After closing the REPL, press **`C`** again to reopen it.
+
+Restart reloads `config.toml` from disk and re-initializes the SteamBot (new login, chat IDs, etc.). Use this after changing bot credentials or chat configuration.
 
 ## JSON Database Structure
 
@@ -216,6 +263,7 @@ The project uses feature flags for modular builds. Default configuration include
 *   **`rest_call_for_sub`** - Call for substitute functionality
 *   **`server_query`** - L4D2 server querying
 *   **`fastdl`** - FastDL file server for Source/GoldSrc games
+*   **`hot_reload`** - Event-driven `config.toml` hot reload
 *   **`sat`** - Satanixon-specific features
 
 To build with specific features:

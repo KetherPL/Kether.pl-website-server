@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
+use tokio::sync::mpsc;
+
+#[derive(Debug, Clone, Copy)]
+pub enum DaemonCommand {
+    Restart,
+    Stop,
+}
 
 /// REPL (Read-Eval-Print Loop) for interactive command execution
 /// 
@@ -10,6 +17,7 @@ use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
 pub struct Repl {
     editor: Reedline,
     prompt: DefaultPrompt,
+    daemon_command_tx: Option<mpsc::UnboundedSender<DaemonCommand>>,
 }
 
 impl Repl {
@@ -23,6 +31,15 @@ impl Repl {
         Self {
             editor: Reedline::create(),
             prompt: DefaultPrompt::new(DefaultPromptSegment::Empty, DefaultPromptSegment::Empty), //Default was exec dir + current time
+            daemon_command_tx: None,
+        }
+    }
+
+    pub fn new_with_command_tx(daemon_command_tx: mpsc::UnboundedSender<DaemonCommand>) -> Self {
+        Self {
+            editor: Reedline::create(),
+            prompt: DefaultPrompt::new(DefaultPromptSegment::Empty, DefaultPromptSegment::Empty),
+            daemon_command_tx: Some(daemon_command_tx),
         }
     }
 
@@ -56,6 +73,34 @@ impl Repl {
                                 println!("Available commands:");
                                 println!("  h, help - Show this help message");
                                 println!("  q, quit, exit - Exit the REPL");
+                                println!("  R, restart - Restart the daemon");
+                                println!("  S, stop - Stop the daemon");
+                            }
+                            "R" | "restart" => {
+                                match &self.daemon_command_tx {
+                                    Some(tx) => {
+                                        if let Err(e) = tx.send(DaemonCommand::Restart) {
+                                            eprintln!("Failed to request daemon restart: {}", e);
+                                        } else {
+                                            println!("Restart requested. Closing REPL...");
+                                        }
+                                    }
+                                    None => eprintln!("Daemon command channel unavailable."),
+                                }
+                                break;
+                            }
+                            "S" | "stop" => {
+                                match &self.daemon_command_tx {
+                                    Some(tx) => {
+                                        if let Err(e) = tx.send(DaemonCommand::Stop) {
+                                            eprintln!("Failed to request daemon stop: {}", e);
+                                        } else {
+                                            println!("Stop requested. Closing REPL...");
+                                        }
+                                    }
+                                    None => eprintln!("Daemon command channel unavailable."),
+                                }
+                                break;
                             }
                             "" => {} // ignore empty input
                             other => {
@@ -99,7 +144,9 @@ impl Default for Repl {
 /// # Returns
 /// * `Ok(())` - Never returns successfully (runs indefinitely)
 /// * `Err(String)` - If key listener setup fails
-pub async fn start_key_listener() -> Result<(), String> {
+pub async fn start_key_listener(
+    daemon_command_tx: mpsc::UnboundedSender<DaemonCommand>,
+) -> Result<(), String> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind};
     
     println!("Type 'C' and press Enter to open the REPL console");
@@ -129,8 +176,8 @@ pub async fn start_key_listener() -> Result<(), String> {
         
         if key_detected {
             // After detecting 'C', spawn the REPL
-            println!("\nOpening REPL console... (Type 'quit' or 'exit' to close)");
-            let repl = Repl::new();
+            println!("\nOpening REPL console... (Type 'help' for available commands or 'quit' to close)");
+            let repl = Repl::new_with_command_tx(daemon_command_tx.clone());
             if let Err(e) = repl.run().await {
                 eprintln!("REPL error: {}", e);
             }

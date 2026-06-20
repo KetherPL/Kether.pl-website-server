@@ -73,8 +73,14 @@ pub use messaging::MessageSender;
 ///     SteamBot::main().await
 /// }
 /// ```
+pub async fn run(shutdown: tokio::sync::broadcast::Receiver<()>) -> Result<(), String> {
+    service::SteamBotService::new().await?.run(shutdown).await
+}
+
+/// Main entry point for the SteamBot service (runs until Ctrl+C).
 pub async fn main() -> Result<(), String> {
-    service::SteamBotService::new().await?.run().await
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+    run(shutdown_rx).await
 }
 
 // Public API methods

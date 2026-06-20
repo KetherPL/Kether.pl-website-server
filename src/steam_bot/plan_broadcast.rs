@@ -43,16 +43,20 @@ const EXPIRATION_POLL_CAP_SECS: i64 = 60;
 
 /// Initializes the broadcast channel for plan timestamps
 /// 
-/// This function should be called once during application startup (typically
+/// This function should be called during application startup (typically
 /// in the Rocket initialization). It creates a broadcast channel with a
 /// buffer capacity of 100 messages and initializes state tracking.
 /// 
+/// Safe to call more than once (e.g. on in-process REST restart); subsequent
+/// calls return a new subscriber without re-initializing global state.
+/// 
 /// # Returns
 /// A receiver that can be used for testing or debugging purposes
-/// 
-/// # Panics
-/// Panics if called more than once, as the broadcaster can only be initialized once.
 pub fn init_broadcaster() -> broadcast::Receiver<String> {
+    if let Some(tx) = PLAN_BROADCASTER.get() {
+        return tx.subscribe();
+    }
+
     let (tx, rx) = broadcast::channel(100);
     PLAN_BROADCASTER.set(tx).expect("Broadcaster already initialized");
     

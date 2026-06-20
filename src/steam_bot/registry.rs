@@ -3,7 +3,7 @@
 use crate::config::{CONF_FILE_NAME, Config, ConfigChange, exe_dir};
 use crate::steam_bot::bot::SteamBot;
 use once_cell::sync::OnceCell;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// Global registry for SteamBot instance and configuration
 /// 
@@ -16,8 +16,12 @@ use std::sync::{Arc, RwLock};
 /// All functions in this module are thread-safe. OnceCell ensures that
 /// initialization happens only once, even in concurrent scenarios.
 
-static STEAM_BOT: OnceCell<Arc<SteamBot>> = OnceCell::new();
+static STEAM_BOT: OnceLock<RwLock<Option<Arc<SteamBot>>>> = OnceLock::new();
 static CONFIG: OnceCell<ConfigHandle> = OnceCell::new();
+
+fn bot_slot() -> &'static RwLock<Option<Arc<SteamBot>>> {
+    STEAM_BOT.get_or_init(|| RwLock::new(None))
+}
 
 pub type ConfigHandle = Arc<RwLock<Arc<Config>>>;
 
@@ -29,18 +33,30 @@ pub type ConfigHandle = Arc<RwLock<Arc<Config>>>;
 /// # Arguments
 /// * `bot` - The SteamBot instance to register
 /// 
-/// # Panics
-/// Panics if called more than once, as the global instance can only be set once.
 pub fn set_bot(bot: Arc<SteamBot>) {
-    STEAM_BOT.set(bot).expect("SteamBot already initialized");
+    match bot_slot().write() {
+        Ok(mut guard) => *guard = Some(bot),
+        Err(e) => *e.into_inner() = Some(bot),
+    }
+}
+
+/// Clears the global SteamBot instance (e.g. before an in-process restart).
+pub fn clear_bot() {
+    match bot_slot().write() {
+        Ok(mut guard) => *guard = None,
+        Err(e) => *e.into_inner() = None,
+    }
 }
 
 /// Gets the global SteamBot instance
 /// 
 /// # Returns
-/// `Some(&Arc<SteamBot>)` if the instance has been initialized, `None` otherwise
-pub fn bot() -> Option<&'static Arc<SteamBot>> {
-    STEAM_BOT.get()
+/// `Some(Arc<SteamBot>)` if the instance has been initialized, `None` otherwise
+pub fn bot() -> Option<Arc<SteamBot>> {
+    match bot_slot().read() {
+        Ok(guard) => guard.clone(),
+        Err(e) => e.into_inner().clone(),
+    }
 }
 
 /// Sets the global configuration

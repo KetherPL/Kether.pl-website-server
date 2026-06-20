@@ -6,6 +6,7 @@ use crate::steam_bot::connection::ConnectionManager;
 use crate::steam_bot::registry;
 use colored::Colorize;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tokio::time::Duration;
 
 /// Coordinates the lifecycle of the SteamBot by handling configuration loading,
@@ -30,15 +31,15 @@ impl SteamBotService {
 
     /// Entry point for running the service. Chooses between disabled and enabled
     /// modes depending on whether credentials are present.
-    pub async fn run(self) -> Result<(), String> {
+    pub async fn run(self, shutdown: broadcast::Receiver<()>) -> Result<(), String> {
         if self.config.steam_account.is_empty() || self.config.steam_password.is_empty() {
-            self.run_disabled_mode().await
+            self.run_disabled_mode(shutdown).await
         } else {
-            self.run_enabled_mode().await
+            self.run_enabled_mode(shutdown).await
         }
     }
 
-    async fn run_disabled_mode(self) -> Result<(), String> {
+    async fn run_disabled_mode(self, shutdown: broadcast::Receiver<()>) -> Result<(), String> {
         let Self { config, .. } = self;
 
         println!("⚠️ No Steam account username and/or password is provided in the config. Call For Sub won't be available.");
@@ -47,10 +48,10 @@ impl SteamBotService {
         registry::set_config_if_absent(config);
 
         println!("SteamBot running in disabled mode...");
-        Self::wait_for_shutdown_loop(false).await
+        Self::wait_for_shutdown_loop(false, shutdown).await
     }
 
-    async fn run_enabled_mode(self) -> Result<(), String> {
+    async fn run_enabled_mode(self, shutdown: broadcast::Receiver<()>) -> Result<(), String> {
         let Self { bot, config } = self;
 
         registry::set_bot(bot.clone());
@@ -62,17 +63,20 @@ impl SteamBotService {
             return Err(format!("Failed to login: {}", e));
         }
 
-        Self::handle_post_login(bot).await
+        Self::handle_post_login(bot, shutdown).await
     }
 
-    async fn handle_post_login(bot: Arc<SteamBot>) -> Result<(), String> {
+    async fn handle_post_login(
+        bot: Arc<SteamBot>,
+        shutdown: broadcast::Receiver<()>,
+    ) -> Result<(), String> {
         println!("Checking for available Steam chat rooms...");
 
         let config = registry::config();
         if config.chat_group_id == 0 || config.chat_id == 0 {
-            Self::run_chat_discovery_mode(bot).await
+            Self::run_chat_discovery_mode(bot, shutdown).await
         } else {
-            Self::run_active_mode(bot).await
+            Self::run_active_mode(bot, shutdown).await
         }
     }
 
@@ -102,7 +106,10 @@ impl SteamBotService {
         }
     }
 
-    async fn run_chat_discovery_mode(bot: Arc<SteamBot>) -> Result<(), String> {
+    async fn run_chat_discovery_mode(
+        bot: Arc<SteamBot>,
+        mut shutdown: broadcast::Receiver<()>,
+    ) -> Result<(), String> {
         println!("⚠️ Chat group_id and/or chat_id not configured in config.toml");
         println!("   Listing available Steam chat rooms...\n");
 
@@ -110,14 +117,17 @@ impl SteamBotService {
         drop(bot);
 
         println!("\nSteamBot running in chat-discovery mode (Call For Sub disabled)...");
-        Self::wait_for_shutdown_loop(true).await
+        Self::wait_for_shutdown_loop(true, shutdown).await
     }
 
-    async fn run_active_mode(bot: Arc<SteamBot>) -> Result<(), String> {
+    async fn run_active_mode(
+        bot: Arc<SteamBot>,
+        mut shutdown: broadcast::Receiver<()>,
+    ) -> Result<(), String> {
         println!("Keeping instance alive...");
 
         // Start message listener
-        let _listener_handle = crate::steam_bot::listener::start_message_listener(bot.clone());
+        let listener_handle = crate::steam_bot::listener::start_message_listener(bot.clone());
 
         let mut health_check_interval = tokio::time::interval(Duration::from_mins(15));
 
@@ -125,6 +135,10 @@ impl SteamBotService {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
                     println!("Shutdown signal received, stopping SteamBot...");
+                    break;
+                }
+                _ = shutdown.recv() => {
+                    println!("Daemon shutdown requested, stopping SteamBot...");
                     break;
                 }
                 _ = health_check_interval.tick() => {
@@ -141,20 +155,30 @@ impl SteamBotService {
             }
         }
 
+        listener_handle.abort();
+        registry::clear_bot();
         println!("SteamBot shutdown complete");
         Ok(())
     }
 
-    async fn wait_for_shutdown_loop(print_completion: bool) -> Result<(), String> {
+    async fn wait_for_shutdown_loop(
+        print_completion: bool,
+        mut shutdown: broadcast::Receiver<()>,
+    ) -> Result<(), String> {
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
                     println!("Shutdown signal received, stopping SteamBot...");
                     break;
                 }
+                _ = shutdown.recv() => {
+                    println!("Daemon shutdown requested, stopping SteamBot...");
+                    break;
+                }
             }
         }
 
+        registry::clear_bot();
         if print_completion {
             println!("SteamBot shutdown complete");
         }

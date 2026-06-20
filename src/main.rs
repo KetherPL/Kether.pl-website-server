@@ -2,7 +2,11 @@
 
 #![allow(non_snake_case)]
 use clap::{Parser, Subcommand};
-use tokio::{task::{spawn, spawn_blocking}, time::{sleep, Duration}};
+use tokio::{task::spawn, time::{sleep, Duration}};
+#[cfg(feature = "rest_api")]
+use tokio::sync::{broadcast, mpsc};
+#[cfg(feature = "rest_api")]
+use tokio::task::JoinHandle;
 #[cfg(feature = "server_query")]
 use gamedig::games::l4d2::query;
 
@@ -116,6 +120,28 @@ enum Commands {
 	}
 }
 
+/// Waits for service tasks to finish after a shutdown signal, with a timeout.
+#[cfg(feature = "rest_api")]
+async fn await_service_shutdown(
+	rest_handle: JoinHandle<()>,
+	#[cfg(feature = "rest_call_for_sub")] bot_handle: Option<JoinHandle<()>>,
+	#[cfg(not(feature = "rest_call_for_sub"))] _bot_handle: Option<JoinHandle<()>>,
+) {
+	let _ = tokio::time::timeout(Duration::from_secs(30), async {
+		if let Err(e) = rest_handle.await {
+			eprintln!("REST task join error: {:?}", e);
+		}
+		#[cfg(feature = "rest_call_for_sub")]
+		if let Some(bot) = bot_handle {
+			if let Err(e) = bot.await {
+				eprintln!("SteamBot task join error: {:?}", e);
+			}
+		}
+	})
+	.await;
+	sleep(Duration::from_millis(500)).await;
+}
+
 /// Main entry point for the Kether Internal Services Server
 /// 
 /// This function serves as the primary entry point for the application.
@@ -146,6 +172,8 @@ async fn main() {
 	#[cfg(feature = "rest_api")]
 	if args.service {
 		println!("Starting internal services server service");
+		let (daemon_command_tx, mut daemon_command_rx) =
+			mpsc::unbounded_channel::<repl::DaemonCommand>();
 		#[cfg(feature = "hot_reload")]
 		let _config_watcher = {
 			let handle = steam_bot::registry::config_handle();
@@ -164,31 +192,91 @@ async fn main() {
 				}
 			}
 		};
-		// :: Start the internal services server ::
-		// Start the LiveServerInfo RESTful service
-		spawn(async {
-			let _ = spawn_blocking(move || REST::main()).await;
-			std::process::exit(0);
-		});
-		// Start the SteamBot
-		spawn(async {
-			if let Err(e) = steam_bot::main().await {
-				eprintln!("SteamBot error: {}", e);
-			}
-		});
 		// Start the REPL key listener (activates on 'C' key press)
+		let daemon_command_tx_for_repl = daemon_command_tx.clone();
 		spawn(async {
-			if let Err(e) = repl::start_key_listener().await {
+			if let Err(e) = repl::start_key_listener(daemon_command_tx_for_repl).await {
 				eprintln!("REPL key listener error: {}", e);
 			}
 		});
-		// Keep the main thread alive so the server thread can run
-		// Without this, the main thread exits immediately, killing the server thread.
-		loop {
-			sleep(Duration::from_secs(1)).await;
+
+		let mut running = true;
+		while running {
+			let (service_shutdown_tx, _) = broadcast::channel::<()>(1);
+			let rest_shutdown = service_shutdown_tx.subscribe();
+			#[cfg(feature = "rest_call_for_sub")]
+			let bot_shutdown = service_shutdown_tx.subscribe();
+
+			#[cfg(feature = "rest_api")]
+			let rest_handle = spawn(async move {
+				if let Err(e) = REST::run(rest_shutdown).await {
+					eprintln!("REST server error: {}", e);
+				}
+			});
+
+			#[cfg(feature = "rest_call_for_sub")]
+			let bot_handle: JoinHandle<()> = spawn(async move {
+				if let Err(e) = steam_bot::run(bot_shutdown).await {
+					eprintln!("SteamBot error: {}", e);
+				}
+			});
+
+			loop {
+				tokio::select! {
+					_ = sleep(Duration::from_secs(1)) => {}
+					Some(cmd) = daemon_command_rx.recv() => {
+						match cmd {
+							repl::DaemonCommand::Restart => {
+								println!("Restart requested via REPL — restarting services in-process...");
+								let _ = service_shutdown_tx.send(());
+								await_service_shutdown(
+									rest_handle,
+									{
+										#[cfg(feature = "rest_call_for_sub")]
+										{
+											Some(bot_handle)
+										}
+										#[cfg(not(feature = "rest_call_for_sub"))]
+										{
+											None
+										}
+									},
+								)
+								.await;
+								println!("Services stopped. Starting fresh...");
+								break;
+							}
+							repl::DaemonCommand::Stop => {
+								println!("Stop requested via REPL. Shutting down daemon.");
+								let _ = service_shutdown_tx.send(());
+								await_service_shutdown(
+									rest_handle,
+									{
+										#[cfg(feature = "rest_call_for_sub")]
+										{
+											Some(bot_handle)
+										}
+										#[cfg(not(feature = "rest_call_for_sub"))]
+										{
+											None
+										}
+									},
+								)
+								.await;
+								running = false;
+								break;
+							}
+						}
+					}
+				}
+				if !running {
+					break;
+				}
+			}
 		}
 
-		//... TODO
+		println!("Daemon exited.");
+		std::process::exit(0);
 	}
 
 	#[cfg(feature = "server_query")]

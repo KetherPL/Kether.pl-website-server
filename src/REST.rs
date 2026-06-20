@@ -10,7 +10,7 @@ use crate::steam_rest::mount_steam_routes;
 use crate::json_cmds_binds_rest::mount_json_routes;
 #[cfg(feature = "rest_json_db")]
 use crate::json_storage::JsonDatabase;
-use rocket::{fs::{FileServer, Options}, launch, routes, Build, Rocket};
+use rocket::{fs::{FileServer, Options}, routes, Build, Rocket};
 use rocket_cors::{AllowedOrigins, CorsOptions};
 
 /// Launches the Rocket web server with all configured routes and middleware
@@ -62,8 +62,7 @@ use rocket_cors::{AllowedOrigins, CorsOptions};
 /// 
 /// # Returns
 /// A configured Rocket instance ready to launch
-#[launch]
-pub fn rocket() -> Rocket<Build> {
+pub fn build_rocket() -> Rocket<Build> {
 	// Configure CORS
 	let allowed_origins = AllowedOrigins::some_exact(&[
 		"http://localhost:3000", // Local Kether website 'npm run start'
@@ -142,4 +141,19 @@ pub fn rocket() -> Rocket<Build> {
 	}
 
 	rocket_build
+}
+
+/// Runs the Rocket server until `shutdown` receives a signal.
+pub async fn run(mut shutdown: tokio::sync::broadcast::Receiver<()>) -> Result<(), String> {
+	let rocket = build_rocket();
+	let rocket = rocket.ignite().await.map_err(|e| e.to_string())?;
+	let shutdown_handle = rocket.shutdown();
+
+	tokio::spawn(async move {
+		let _ = shutdown.recv().await;
+		shutdown_handle.notify();
+	});
+
+	rocket.launch().await.map_err(|e| e.to_string())?;
+	Ok(())
 }

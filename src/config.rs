@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::{path::PathBuf, fmt};
+use std::{fmt, path::{Path, PathBuf}};
 use colored::Colorize;
 use rocket::serde::{Deserialize, Serialize};
 use smol::fs;
@@ -154,7 +154,7 @@ impl Default for ServerConfig {
 /// * `steam_password` - Steam account password for bot login
 /// * `server_ip` - IP address of the L4D2 server
 /// * `server_port` - Port number of the L4D2 server
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
 	pub frontend_admins: Vec<i64>,
 	pub steam_web_api_key: String,
@@ -167,6 +167,35 @@ pub struct Config {
 	pub server2_ip: String,
 	pub server2_port: u16,
 	pub steam_bot_commands_without_mention: bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ConfigChange {
+	pub live_applied: Vec<&'static str>,
+	pub requires_restart: Vec<&'static str>,
+	pub unchanged: bool,
+}
+
+impl ConfigChange {
+	pub fn log(&self) {
+		if self.unchanged {
+			return;
+		}
+
+		if !self.live_applied.is_empty() {
+			println!(
+				"Config hot reload: applied live fields: {}",
+				self.live_applied.join(", ")
+			);
+		}
+
+		if !self.requires_restart.is_empty() {
+			eprintln!(
+				"Config hot reload: restart required for fields: {}",
+				self.requires_restart.join(", ")
+			);
+		}
+	}
 }
 
 impl Config {
@@ -191,9 +220,21 @@ impl Config {
 		
 		// Load and parse TOML
 		let content = fs::read_to_string(&conf_path).await?;
-		let config_file: ConfigFile = toml::from_str(&content)?;
-		
-		Ok(Config {
+		Self::from_toml_str(&content).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+	}
+
+	pub fn load_from(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+		let content = std::fs::read_to_string(path)?;
+		Self::from_toml_str(&content).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+	}
+
+	pub fn from_toml_str(content: &str) -> Result<Self, toml::de::Error> {
+		let config_file: ConfigFile = toml::from_str(content)?;
+		Ok(Self::from_config_file(config_file))
+	}
+
+	fn from_config_file(config_file: ConfigFile) -> Self {
+		Self {
 			frontend_admins: config_file.frontend_admins,
 			steam_web_api_key: config_file.steam.web_api_key,
 			chat_group_id: config_file.steam.chat.group_id,
@@ -205,7 +246,48 @@ impl Config {
 			server2_ip: config_file.server2.ip,
 			server2_port: config_file.server2.port,
 			steam_bot_commands_without_mention: config_file.steam.chat.commands_without_mention,
-		})
+		}
+	}
+
+	pub fn diff(&self, new: &Config) -> ConfigChange {
+		let mut change = ConfigChange::default();
+
+		if self.frontend_admins != new.frontend_admins {
+			change.live_applied.push("frontend_admins");
+		}
+		if self.steam_web_api_key != new.steam_web_api_key {
+			change.live_applied.push("steam.web_api_key");
+		}
+		if self.server_ip != new.server_ip {
+			change.live_applied.push("server.ip");
+		}
+		if self.server_port != new.server_port {
+			change.live_applied.push("server.port");
+		}
+		if self.server2_ip != new.server2_ip {
+			change.live_applied.push("server2.ip");
+		}
+		if self.server2_port != new.server2_port {
+			change.live_applied.push("server2.port");
+		}
+		if self.steam_bot_commands_without_mention != new.steam_bot_commands_without_mention {
+			change.live_applied.push("steam.chat.commands_without_mention");
+		}
+		if self.steam_account != new.steam_account {
+			change.requires_restart.push("steam.bot.username");
+		}
+		if self.steam_password != new.steam_password {
+			change.requires_restart.push("steam.bot.password");
+		}
+		if self.chat_group_id != new.chat_group_id {
+			change.requires_restart.push("steam.chat.group_id");
+		}
+		if self.chat_id != new.chat_id {
+			change.requires_restart.push("steam.chat.chat_id");
+		}
+
+		change.unchanged = change.live_applied.is_empty() && change.requires_restart.is_empty();
+		change
 	}
 	
 	/// Generate TOML content with helpful comments
@@ -406,3 +488,102 @@ impl fmt::Display for QuietErr {
 }
 
 impl std::error::Error for QuietErr {}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn full_toml() -> &'static str {
+		r#"
+frontend_admins = [76561198000000001, 76561198000000002]
+
+[server]
+ip = "127.0.0.1"
+port = 27015
+
+[server2]
+ip = "127.0.0.2"
+port = 27016
+
+[steam]
+web_api_key = "key_123"
+
+[steam.bot]
+username = "bot_user"
+password = "bot_pass"
+
+[steam.chat]
+group_id = 1234
+chat_id = 5678
+commands_without_mention = true
+"#
+	}
+
+	#[test]
+	fn from_toml_str_parses_expected_fields() {
+		let parsed = Config::from_toml_str(full_toml()).expect("expected valid config");
+		assert_eq!(parsed.frontend_admins.len(), 2);
+		assert_eq!(parsed.steam_web_api_key, "key_123");
+		assert_eq!(parsed.chat_group_id, 1234);
+		assert_eq!(parsed.chat_id, 5678);
+		assert_eq!(parsed.steam_account, "bot_user");
+		assert_eq!(parsed.steam_password, "bot_pass");
+		assert_eq!(parsed.server_ip, "127.0.0.1");
+		assert_eq!(parsed.server_port, 27015);
+		assert_eq!(parsed.server2_ip, "127.0.0.2");
+		assert_eq!(parsed.server2_port, 27016);
+		assert!(parsed.steam_bot_commands_without_mention);
+	}
+
+	#[test]
+	fn from_toml_str_uses_defaults_for_missing_sections() {
+		let parsed = Config::from_toml_str("frontend_admins = []").expect("expected defaults");
+		assert_eq!(parsed.frontend_admins, Vec::<i64>::new());
+		assert!(parsed.steam_web_api_key.is_empty());
+		assert_eq!(parsed.server_port, 0);
+		assert_eq!(parsed.server2_port, 0);
+		assert_eq!(parsed.chat_group_id, 0);
+		assert_eq!(parsed.chat_id, 0);
+		assert!(!parsed.steam_bot_commands_without_mention);
+	}
+
+	#[test]
+	fn from_toml_str_rejects_malformed_toml() {
+		let result = Config::from_toml_str("this = [");
+		assert!(result.is_err());
+	}
+
+	#[test]
+	fn load_from_reads_and_parses_file() {
+		let temp = tempfile::tempdir().expect("tempdir");
+		let path = temp.path().join("config.toml");
+		std::fs::write(&path, full_toml()).expect("write fixture");
+
+		let loaded = Config::load_from(&path).expect("load from path");
+		assert_eq!(loaded.server_ip, "127.0.0.1");
+		assert_eq!(loaded.chat_id, 5678);
+	}
+
+	#[test]
+	fn diff_classifies_live_and_restart_fields() {
+		let old = Config::from_toml_str(full_toml()).expect("old");
+		let mut new = Config::from_toml_str(full_toml()).expect("new");
+		new.server_ip = "10.0.0.1".to_string();
+		new.steam_password = "updated".to_string();
+
+		let change = old.diff(&new);
+		assert!(!change.unchanged);
+		assert!(change.live_applied.contains(&"server.ip"));
+		assert!(change.requires_restart.contains(&"steam.bot.password"));
+	}
+
+	#[test]
+	fn diff_marks_unchanged_when_equal() {
+		let old = Config::from_toml_str(full_toml()).expect("old");
+		let new = Config::from_toml_str(full_toml()).expect("new");
+		let change = old.diff(&new);
+		assert!(change.unchanged);
+		assert!(change.live_applied.is_empty());
+		assert!(change.requires_restart.is_empty());
+	}
+}

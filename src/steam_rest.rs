@@ -3,7 +3,17 @@
 use rocket::{http::Status, options, post, routes, serde::json::Json, State};
 use steam_rs::{steam_user::get_player_summaries::Player, steam_id::SteamId, Steam};
 use rocket::serde::{Serialize, Deserialize};
-use crate::config::Config;
+use crate::steam_bot::registry::ConfigHandle;
+
+fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<crate::config::Config> {
+	match handle.read() {
+		Ok(guard) => guard.clone(),
+		Err(e) => {
+			eprintln!("Warning: Config lock poisoned in steam_rest: {}", e);
+			e.into_inner().clone()
+		}
+	}
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(crate = "rocket::serde")]
@@ -42,7 +52,8 @@ pub struct GamesInfo {
 // --- User Data ---
 
 #[post("/userData", data = "<steam_id>")]
-pub async fn get_user_data(steam_id: String, config: &State<Config>) -> Result<Json<SteamUserDetails>, Status> {
+pub async fn get_user_data(steam_id: String, config: &State<ConfigHandle>) -> Result<Json<SteamUserDetails>, Status> {
+	let config = config_snapshot(config);
 	let steam = Steam::new(&config.steam_web_api_key);
 
 	// Parse the steam_id string to u64
@@ -78,7 +89,8 @@ pub async fn get_user_data(steam_id: String, config: &State<Config>) -> Result<J
 // --- User's L4D2 posession state ---
 
 #[post("/games", data = "<steam_id>")] //Just check if the user has L4D2 bought on his account
-pub async fn get_user_games(steam_id: String, config: &State<Config>) -> Result<Json<GamesInfo>, Status> {
+pub async fn get_user_games(steam_id: String, config: &State<ConfigHandle>) -> Result<Json<GamesInfo>, Status> {
+	let config = config_snapshot(config);
 	let steam = Steam::new(&config.steam_web_api_key);
 
 	// Parse the steam_id string to u64

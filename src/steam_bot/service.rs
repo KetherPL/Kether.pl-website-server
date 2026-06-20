@@ -58,7 +58,7 @@ impl SteamBotService {
 
         println!("Logging in to Steam...");
         let config_ref = registry::config();
-        if let Err(e) = bot.login(config_ref).await {
+        if let Err(e) = bot.login(&config_ref).await {
             return Err(format!("Failed to login: {}", e));
         }
 
@@ -130,7 +130,7 @@ impl SteamBotService {
                 _ = health_check_interval.tick() => {
                     let config = registry::config();
                     println!("Performing periodic Steam connection health check...");
-                    if let Err(e) = ConnectionManager::ensure_healthy(&bot, config, false).await {
+                    if let Err(e) = ConnectionManager::ensure_healthy(&bot, &config, false).await {
                         eprintln!("Periodic health check failed: {}", e);
                     } else {
                         let state = bot.get_connection_state().await;

@@ -500,7 +500,7 @@ impl CommandHandler for StatusCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
         let config = registry::config();
         let parsed_args = Self::parse_args(ctx.args)?;
-        let servers = Self::select_servers(Self::configured_servers(config), parsed_args.server_id)?;
+        let servers = Self::select_servers(Self::configured_servers(&config), parsed_args.server_id)?;
 
         if servers.is_empty() {
             return Err(CommandError::ConfigError("Server Status: Configuration error".to_string()));

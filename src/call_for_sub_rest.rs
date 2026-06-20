@@ -3,7 +3,7 @@
 use rocket::{http::Status, post, routes, serde::json::Json, State};
 use steam_rs::{steam_id::SteamId, Steam};
 use rocket::serde::Deserialize;
-use crate::{config::Config, steam_bot::SteamBot};
+use crate::steam_bot::{SteamBot, registry::ConfigHandle};
 use colored::Colorize;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -46,6 +46,16 @@ pub struct CallForSubPayload {
 	/// to match the expected API format.
 	#[serde(rename = "steamID")]
 	steam_id: u64,
+}
+
+fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<crate::config::Config> {
+	match handle.read() {
+		Ok(guard) => guard.clone(),
+		Err(e) => {
+			eprintln!("Warning: Config lock poisoned in call_for_sub_rest: {}", e);
+			e.into_inner().clone()
+		}
+	}
 }
 
 // --- Call For Sub ---
@@ -99,7 +109,8 @@ pub struct CallForSubPayload {
 /// * `PLAYER_NAME` - The player's Steam display name
 /// * `@online` - Mentions all online members in the group
 #[post("/", data = "<payload>")]
-pub async fn call_for_sub(payload: Json<CallForSubPayload>, config: &State<Config>) -> Result<(), Status> {
+pub async fn call_for_sub(payload: Json<CallForSubPayload>, config: &State<ConfigHandle>) -> Result<(), Status> {
+	let config = config_snapshot(config);
 	// Initialize rate limiter if not already done
 	let semaphore = STEAM_API_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(STEAM_API_RATE_LIMIT)));
 	

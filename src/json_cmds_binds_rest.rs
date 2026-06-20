@@ -8,7 +8,7 @@ use rocket::{
 use rocket::{options, post, routes};
 use rocket::serde::{Deserialize, Serialize};
 
-use crate::config::Config;
+use crate::steam_bot::registry::ConfigHandle;
 use crate::json_api::{binds, commands, suggestions, utils::ok_status, votings};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -25,9 +25,16 @@ pub struct VerifyAdminResponse {
 
 #[post("/admin/verify", data = "<request>")]
 pub fn verify_admin(
-	config: &State<Config>,
+	config: &State<ConfigHandle>,
 	request: Json<VerifyAdminRequest>,
 ) -> Result<Json<VerifyAdminResponse>, Status> {
+	let config = match config.read() {
+		Ok(guard) => guard.clone(),
+		Err(e) => {
+			eprintln!("Warning: Config lock poisoned in json_cmds_binds_rest: {}", e);
+			e.into_inner().clone()
+		}
+	};
 	let is_admin = config.is_admin(request.steam_id);
 	Ok(Json(VerifyAdminResponse { is_admin }))
 }

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::config::Config;
+use crate::config::{CONF_FILE_NAME, Config, ConfigChange, exe_dir};
 use crate::steam_bot::bot::SteamBot;
 use once_cell::sync::OnceCell;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// Global registry for SteamBot instance and configuration
 /// 
@@ -17,7 +17,9 @@ use std::sync::Arc;
 /// initialization happens only once, even in concurrent scenarios.
 
 static STEAM_BOT: OnceCell<Arc<SteamBot>> = OnceCell::new();
-static CONFIG: OnceCell<Config> = OnceCell::new();
+static CONFIG: OnceCell<ConfigHandle> = OnceCell::new();
+
+pub type ConfigHandle = Arc<RwLock<Arc<Config>>>;
 
 /// Sets the global SteamBot instance
 /// 
@@ -52,7 +54,17 @@ pub fn bot() -> Option<&'static Arc<SteamBot>> {
 /// # Panics
 /// Panics if called more than once, as the global config can only be set once.
 pub fn set_config(config: Config) {
-    CONFIG.set(config).expect("Config already initialized");
+    if let Some(handle) = CONFIG.get() {
+        if let Ok(mut guard) = handle.write() {
+            *guard = Arc::new(config);
+            return;
+        }
+        panic!("Config lock poisoned");
+    }
+
+    CONFIG
+        .set(Arc::new(RwLock::new(Arc::new(config))))
+        .expect("Config already initialized");
 }
 
 /// Sets the global configuration if it hasn't been set yet
@@ -63,7 +75,7 @@ pub fn set_config(config: Config) {
 /// # Arguments
 /// * `config` - The configuration to register (only if not already set)
 pub fn set_config_if_absent(config: Config) {
-    let _ = CONFIG.set(config);
+    let _ = CONFIG.set(Arc::new(RwLock::new(Arc::new(config))));
 }
 
 /// Gets the global configuration
@@ -74,15 +86,63 @@ pub fn set_config_if_absent(config: Config) {
 /// # Panics
 /// Panics if the configuration has not been initialized. Use `set_config()`
 /// or `set_config_if_absent()` before calling this function.
-pub fn config() -> &'static Config {
-    CONFIG.get().expect("Config not initialized")
+pub fn config() -> Arc<Config> {
+    let handle = CONFIG.get().expect("Config not initialized");
+    match handle.read() {
+        Ok(guard) => guard.clone(),
+        Err(e) => {
+            eprintln!("Warning: Config lock poisoned: {}", e);
+            e.into_inner().clone()
+        }
+    }
 }
 
 /// Gets the global configuration if available
 /// 
 /// # Returns
 /// `Some(&Config)` if the configuration has been initialized, `None` otherwise
-pub fn config_opt() -> Option<&'static Config> {
-    CONFIG.get()
+pub fn config_opt() -> Option<Arc<Config>> {
+    CONFIG.get().map(|handle| match handle.read() {
+        Ok(guard) => guard.clone(),
+        Err(e) => {
+            eprintln!("Warning: Config lock poisoned: {}", e);
+            e.into_inner().clone()
+        }
+    })
+}
+
+pub fn config_handle() -> ConfigHandle {
+    if let Some(handle) = CONFIG.get() {
+        return handle.clone();
+    }
+
+    let config_path = exe_dir()
+        .map(|d| d.join(CONF_FILE_NAME))
+        .expect("Failed to get executable directory for config handle");
+    let loaded = Config::load_from(&config_path)
+        .expect("Failed to load configuration for shared config handle");
+    let handle = Arc::new(RwLock::new(Arc::new(loaded)));
+    let _ = CONFIG.set(handle.clone());
+    handle
+}
+
+pub fn reload_config(new_config: Config) -> ConfigChange {
+    let handle = config_handle();
+    match handle.write() {
+        Ok(mut guard) => {
+            let previous = guard.clone();
+            let change = previous.diff(&new_config);
+            *guard = Arc::new(new_config);
+            change
+        }
+        Err(e) => {
+            eprintln!("Warning: Config lock poisoned during reload: {}", e);
+            let mut guard = e.into_inner();
+            let previous = guard.clone();
+            let change = previous.diff(&new_config);
+            *guard = Arc::new(new_config);
+            change
+        }
+    }
 }
 

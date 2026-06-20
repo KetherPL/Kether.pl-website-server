@@ -39,7 +39,7 @@ mod connection;
 mod listener;
 mod messaging;
 pub mod plan_broadcast;
-mod registry;
+pub(crate) mod registry;
 mod service;
 mod state;
 mod utils;

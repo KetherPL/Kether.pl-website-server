@@ -203,7 +203,7 @@ impl MessageSender {
             return Err("SteamBot not initialized".into());
         };
         let config = registry::config();
-        Self::send_with_immediate_recovery(steam_bot, message, config).await
+        Self::send_with_immediate_recovery(steam_bot, message, &config).await
     }
 
     /// Sends a message to a specific chat room using the global SteamBot instance
@@ -262,7 +262,7 @@ impl MessageSender {
             return Err("SteamBot not initialized".into());
         };
         let config = registry::config();
-        Self::send_to_chat_with_recovery_preprocessed(steam_bot, message, chat_group_id, chat_id, config).await
+        Self::send_to_chat_with_recovery_preprocessed(steam_bot, message, chat_group_id, chat_id, &config).await
     }
 
     /// Sends a message to a specific Steam group chat room with automatic recovery (returns PreprocessedMessage)

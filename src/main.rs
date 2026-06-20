@@ -15,6 +15,9 @@ mod REST;
 #[cfg(feature = "cfg")]
 mod config;
 
+#[cfg(feature = "hot_reload")]
+mod config_watch;
+
 #[cfg(feature = "rest_steam")]
 mod steam_rest;
 
@@ -143,6 +146,24 @@ async fn main() {
 	#[cfg(feature = "rest_api")]
 	if args.service {
 		println!("Starting internal services server service");
+		#[cfg(feature = "hot_reload")]
+		let _config_watcher = {
+			let handle = steam_bot::registry::config_handle();
+			let config_path = match config::exe_dir() {
+				Ok(dir) => dir.join(config::CONF_FILE_NAME),
+				Err(e) => {
+					eprintln!("Failed to build config watcher path: {}", e);
+					return;
+				}
+			};
+			match config_watch::spawn_config_watcher(handle, config_path) {
+				Ok(watcher) => watcher,
+				Err(e) => {
+					eprintln!("Failed to start config watcher: {}", e);
+					return;
+				}
+			}
+		};
 		// :: Start the internal services server ::
 		// Start the LiveServerInfo RESTful service
 		spawn(async {

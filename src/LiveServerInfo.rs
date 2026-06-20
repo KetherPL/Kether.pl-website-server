@@ -8,7 +8,17 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
-use crate::config::Config;
+use crate::steam_bot::registry::ConfigHandle;
+fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<crate::config::Config> {
+	match handle.read() {
+		Ok(guard) => guard.clone(),
+		Err(e) => {
+			eprintln!("Warning: Config lock poisoned in LiveServerInfo: {}", e);
+			e.into_inner().clone()
+		}
+	}
+}
+
 
 // Define a struct to represent the L4D2 server response
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -165,13 +175,15 @@ pub async fn live_server_info(ip: String, port: u16) -> Result<Json<L4D2ServerIn
 }
 
 #[get("/kether")]
-pub async fn live_server_info_kether(config: &State<Config>) -> Result<Json<L4D2ServerInfo>, Status> {
+pub async fn live_server_info_kether(config: &State<ConfigHandle>) -> Result<Json<L4D2ServerInfo>, Status> {
+	let config = config_snapshot(config);
 	query_server_with_retry(config.server_ip(), config.server_port()).await
 		.map(Json)
 }
 
 #[get("/kether2")]
-pub async fn live_server_info_kether2(config: &State<Config>) -> Result<Json<L4D2ServerInfo>, Status> {
+pub async fn live_server_info_kether2(config: &State<ConfigHandle>) -> Result<Json<L4D2ServerInfo>, Status> {
+	let config = config_snapshot(config);
 	query_server_with_retry(config.server2_ip(), config.server2_port()).await
 		.map(Json)
 }

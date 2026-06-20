@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "server_query"))]
-use crate::config::Config;
+#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "server_query", feature = "rest_json_db"))]
+use crate::steam_bot::registry;
 #[cfg(feature = "server_query")]
 use crate::LiveServerInfo::{live_server_info, live_server_info_kether, live_server_info_kether2};
 #[cfg(feature = "rest_steam")]
@@ -93,8 +93,7 @@ pub fn rocket() -> Rocket<Build> {
 
 	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "rest_json_db", feature = "server_query"))]
 	{
-		let config = smol::block_on(Config::load()).expect("Failed to load configuration");
-		rocket_build = rocket_build.manage(config);
+		rocket_build = rocket_build.manage(registry::config_handle());
 	}
 	#[cfg(feature = "rest_json_db")]
 	{

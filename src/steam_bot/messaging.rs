@@ -369,5 +369,52 @@ impl MessageSender {
         };
         Self::delete_message(&steam_bot, chat_group_id, chat_id, preprocessed).await
     }
+
+    /// Deletes a single message from a Steam group chat room using explicit identifiers.
+    ///
+    /// This is intended for incoming-message moderation workflows where message identifiers
+    /// come from chat notifications rather than from `PreprocessedMessage`.
+    ///
+    /// # Arguments
+    /// * `chat_group_id` - The chat group ID where the message is located
+    /// * `chat_id` - The chat room ID where the message is located
+    /// * `server_timestamp` - Steam server timestamp of the message (required, non-zero)
+    /// * `ordinal` - Message ordinal; can be zero
+    ///
+    /// # Returns
+    /// * `Ok(())` - If message is deleted successfully
+    /// * `Err(Box<dyn std::error::Error>)` - If deletion fails
+    pub async fn delete_group_message_by_id_global(
+        chat_group_id: u64,
+        chat_id: u64,
+        server_timestamp: u32,
+        ordinal: u32,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if server_timestamp == 0 {
+            return Err("Cannot delete message: server_timestamp is zero".into());
+        }
+
+        let Some(steam_bot) = registry::bot() else {
+            return Err("SteamBot not initialized".into());
+        };
+
+        let session_guard = steam_bot.session.lock().await;
+        let Some(ref session) = *session_guard else {
+            return Err("SteamBot not fully initialized. Please login first.".into());
+        };
+
+        session
+            .chat()
+            .delete_group_messages(chat_group_id, chat_id, vec![(server_timestamp, ordinal)])
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to delete message (group: {}, chat: {}, ts: {}, ordinal: {}): {}",
+                    chat_group_id, chat_id, server_timestamp, ordinal, e
+                )
+            })?;
+
+        Ok(())
+    }
 }
 

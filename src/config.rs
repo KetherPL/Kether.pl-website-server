@@ -70,6 +70,22 @@ struct ChatConfig {
 	/// Whether commands can be invoked without mentioning the bot
 	#[serde(default)]
 	commands_without_mention: bool,
+
+	/// Dedicated chat ID for lobby planning command responses
+	#[serde(default)]
+	plan_chat_id: u64,
+
+	/// Whether dedicated planning chat routing is enabled
+	#[serde(default)]
+	dedicated_plan_chat: bool,
+
+	/// Whether to keep dedicated planning chat clean from non-bot messages
+	#[serde(default)]
+	plan_chat_keep_clean: bool,
+
+	/// Whether to mention the user who executed !plan
+	#[serde(default)]
+	plan_mention_user: bool,
 }
 
 /// L4D2 server configuration
@@ -130,6 +146,10 @@ impl Default for ChatConfig {
 			group_id: 0,
 			chat_id: 0,
 			commands_without_mention: false,
+			plan_chat_id: 0,
+			dedicated_plan_chat: false,
+			plan_chat_keep_clean: false,
+			plan_mention_user: false,
 		}
 	}
 }
@@ -150,6 +170,10 @@ impl Default for ServerConfig {
 /// * `steam_web_api_key` - Steam Web API key for fetching user data
 /// * `chat_group_id` - Steam group ID for chat functionality
 /// * `chat_id` - Steam chat ID for message sending
+/// * `plan_chat_id` - Dedicated chat ID for lobby planning responses
+/// * `dedicated_plan_chat` - Whether dedicated planning chat routing is enabled
+/// * `plan_chat_keep_clean` - Whether non-bot messages should be removed from dedicated planning chat
+/// * `plan_mention_user` - Whether planning messages mention the executing user
 /// * `steam_account` - Steam account username for bot login
 /// * `steam_password` - Steam account password for bot login
 /// * `server_ip` - IP address of the L4D2 server
@@ -160,6 +184,10 @@ pub struct Config {
 	pub steam_web_api_key: String,
 	pub chat_group_id: u64,
 	pub chat_id: u64,
+	pub plan_chat_id: u64,
+	pub dedicated_plan_chat: bool,
+	pub plan_chat_keep_clean: bool,
+	pub plan_mention_user: bool,
 	pub steam_account: String,
 	pub steam_password: String,
 	pub server_ip: String,
@@ -239,6 +267,10 @@ impl Config {
 			steam_web_api_key: config_file.steam.web_api_key,
 			chat_group_id: config_file.steam.chat.group_id,
 			chat_id: config_file.steam.chat.chat_id,
+			plan_chat_id: config_file.steam.chat.plan_chat_id,
+			dedicated_plan_chat: config_file.steam.chat.dedicated_plan_chat,
+			plan_chat_keep_clean: config_file.steam.chat.plan_chat_keep_clean,
+			plan_mention_user: config_file.steam.chat.plan_mention_user,
 			steam_account: config_file.steam.bot.username,
 			steam_password: config_file.steam.bot.password,
 			server_ip: config_file.server.ip,
@@ -272,6 +304,18 @@ impl Config {
 		}
 		if self.steam_bot_commands_without_mention != new.steam_bot_commands_without_mention {
 			change.live_applied.push("steam.chat.commands_without_mention");
+		}
+		if self.plan_chat_id != new.plan_chat_id {
+			change.live_applied.push("steam.chat.plan_chat_id");
+		}
+		if self.dedicated_plan_chat != new.dedicated_plan_chat {
+			change.live_applied.push("steam.chat.dedicated_plan_chat");
+		}
+		if self.plan_chat_keep_clean != new.plan_chat_keep_clean {
+			change.live_applied.push("steam.chat.plan_chat_keep_clean");
+		}
+		if self.plan_mention_user != new.plan_mention_user {
+			change.live_applied.push("steam.chat.plan_mention_user");
 		}
 		if self.steam_account != new.steam_account {
 			change.requires_restart.push("steam.bot.username");
@@ -332,6 +376,21 @@ chat_id = 0
 # Whether commands can be invoked without mentioning the bot (true/false)
 # If true, simply typing "!plan 19" will work without @mentioning the bot
 commands_without_mention = false
+
+# Dedicated chat room id for planning messages (!plan / !plan clear)
+# Uses the same steam.chat.group_id; set to 0 to disable
+plan_chat_id = 0
+
+# If true, planning command responses are posted only to plan_chat_id
+# If plan_chat_id is 0, this behaves as disabled
+dedicated_plan_chat = false
+
+# If true, removes non-bot messages from the dedicated planning chat
+# Works only when plan_chat_id is configured
+plan_chat_keep_clean = false
+
+# If true, planning messages mention the user who executed the command
+plan_mention_user = false
 "#.to_string()
 	}
 	
@@ -418,6 +477,26 @@ commands_without_mention = false
 			2 => self.secondary_server(),
 			_ => None,
 		}
+	}
+
+	/// Returns dedicated planning chat target when feature is enabled and configured.
+	///
+	/// # Returns
+	/// `Some((chat_group_id, plan_chat_id))` when dedicated planning is enabled and chat id is set,
+	/// otherwise `None`.
+	pub fn effective_plan_chat(&self) -> Option<(u64, u64)> {
+		(self.dedicated_plan_chat && self.plan_chat_id != 0)
+			.then_some((self.chat_group_id, self.plan_chat_id))
+	}
+
+	/// Returns dedicated planning chat target for clean-up when feature is enabled and configured.
+	///
+	/// # Returns
+	/// `Some((chat_group_id, plan_chat_id))` when clean-up is enabled and chat id is set,
+	/// otherwise `None`.
+	pub fn plan_chat_clean_target(&self) -> Option<(u64, u64)> {
+		(self.plan_chat_keep_clean && self.plan_chat_id != 0)
+			.then_some((self.chat_group_id, self.plan_chat_id))
 	}
 }
 
@@ -516,6 +595,10 @@ password = "bot_pass"
 group_id = 1234
 chat_id = 5678
 commands_without_mention = true
+plan_chat_id = 4321
+dedicated_plan_chat = true
+plan_chat_keep_clean = true
+plan_mention_user = true
 "#
 	}
 
@@ -526,6 +609,10 @@ commands_without_mention = true
 		assert_eq!(parsed.steam_web_api_key, "key_123");
 		assert_eq!(parsed.chat_group_id, 1234);
 		assert_eq!(parsed.chat_id, 5678);
+		assert_eq!(parsed.plan_chat_id, 4321);
+		assert!(parsed.dedicated_plan_chat);
+		assert!(parsed.plan_chat_keep_clean);
+		assert!(parsed.plan_mention_user);
 		assert_eq!(parsed.steam_account, "bot_user");
 		assert_eq!(parsed.steam_password, "bot_pass");
 		assert_eq!(parsed.server_ip, "127.0.0.1");
@@ -544,6 +631,10 @@ commands_without_mention = true
 		assert_eq!(parsed.server2_port, 0);
 		assert_eq!(parsed.chat_group_id, 0);
 		assert_eq!(parsed.chat_id, 0);
+		assert_eq!(parsed.plan_chat_id, 0);
+		assert!(!parsed.dedicated_plan_chat);
+		assert!(!parsed.plan_chat_keep_clean);
+		assert!(!parsed.plan_mention_user);
 		assert!(!parsed.steam_bot_commands_without_mention);
 	}
 
@@ -570,11 +661,39 @@ commands_without_mention = true
 		let mut new = Config::from_toml_str(full_toml()).expect("new");
 		new.server_ip = "10.0.0.1".to_string();
 		new.steam_password = "updated".to_string();
+		new.plan_mention_user = false;
 
 		let change = old.diff(&new);
 		assert!(!change.unchanged);
 		assert!(change.live_applied.contains(&"server.ip"));
+		assert!(change.live_applied.contains(&"steam.chat.plan_mention_user"));
 		assert!(change.requires_restart.contains(&"steam.bot.password"));
+	}
+
+	#[test]
+	fn effective_plan_chat_requires_enabled_and_chat_id() {
+		let mut config = Config::from_toml_str(full_toml()).expect("config");
+		assert_eq!(config.effective_plan_chat(), Some((1234, 4321)));
+
+		config.dedicated_plan_chat = false;
+		assert_eq!(config.effective_plan_chat(), None);
+
+		config.dedicated_plan_chat = true;
+		config.plan_chat_id = 0;
+		assert_eq!(config.effective_plan_chat(), None);
+	}
+
+	#[test]
+	fn plan_chat_clean_target_requires_enabled_and_chat_id() {
+		let mut config = Config::from_toml_str(full_toml()).expect("config");
+		assert_eq!(config.plan_chat_clean_target(), Some((1234, 4321)));
+
+		config.plan_chat_keep_clean = false;
+		assert_eq!(config.plan_chat_clean_target(), None);
+
+		config.plan_chat_keep_clean = true;
+		config.plan_chat_id = 0;
+		assert_eq!(config.plan_chat_clean_target(), None);
 	}
 
 	#[test]

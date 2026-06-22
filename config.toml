@@ -38,3 +38,18 @@ chat_id = 0
 # Whether commands can be invoked without mentioning the bot (true/false)
 # If true, simply typing "!plan 19" will work without @mentioning the bot
 commands_without_mention = false
+
+# Dedicated chat room id for planning messages (!plan / !plan clear)
+# Uses the same steam.chat.group_id; set to 0 to disable
+plan_chat_id = 0
+
+# If true, planning command responses are posted only to plan_chat_id
+# If plan_chat_id is 0, this behaves as disabled
+dedicated_plan_chat = false
+
+# If true, removes non-bot messages from the dedicated planning chat
+# Works only when plan_chat_id is configured
+plan_chat_keep_clean = false
+
+# If true, planning messages mention the user who executed the command
+plan_mention_user = false

@@ -73,6 +73,7 @@ impl SteamBotService {
         println!("Checking for available Steam chat rooms...");
 
         let config = registry::config();
+        Self::validate_plan_chat_config(&config);
         if config.chat_group_id == 0 || config.chat_id == 0 {
             Self::run_chat_discovery_mode(bot, shutdown).await
         } else {
@@ -108,7 +109,7 @@ impl SteamBotService {
 
     async fn run_chat_discovery_mode(
         bot: Arc<SteamBot>,
-        mut shutdown: broadcast::Receiver<()>,
+        shutdown: broadcast::Receiver<()>,
     ) -> Result<(), String> {
         println!("⚠️ Chat group_id and/or chat_id not configured in config.toml");
         println!("   Listing available Steam chat rooms...\n");
@@ -118,6 +119,20 @@ impl SteamBotService {
 
         println!("\nSteamBot running in chat-discovery mode (Call For Sub disabled)...");
         Self::wait_for_shutdown_loop(true, shutdown).await
+    }
+
+    fn validate_plan_chat_config(config: &Config) {
+        if config.dedicated_plan_chat && config.plan_chat_id == 0 {
+            eprintln!(
+                "Warning: steam.chat.dedicated_plan_chat is enabled but steam.chat.plan_chat_id is not set. Dedicated planning chat stays disabled."
+            );
+        }
+
+        if config.plan_chat_keep_clean && config.plan_chat_id == 0 {
+            eprintln!(
+                "Warning: steam.chat.plan_chat_keep_clean is enabled but steam.chat.plan_chat_id is not set. Dedicated planning chat cleanup stays disabled."
+            );
+        }
     }
 
     async fn run_active_mode(

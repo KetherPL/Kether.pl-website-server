@@ -339,6 +339,7 @@ async fn listen_for_messages(
         if let Some(response) = process_message(&message, bot_steam_id) {
             send_command_response(&message, &response);
         }
+        maybe_clean_dedicated_chat(&message, bot_steam_id);
     });
 
     let bot_clone = bot.clone();
@@ -374,6 +375,47 @@ fn send_command_response(message: &EnhancedGroupChatMessage, response: &str) {
         Err(e) => {
             eprintln!("Failed to get runtime handle: {}", e);
             eprintln!("Cannot spawn task to send response");
+        }
+    }
+}
+
+/// Deletes non-bot messages in the dedicated planning chat when cleanup is enabled.
+fn maybe_clean_dedicated_chat(message: &EnhancedGroupChatMessage, bot_steam_id: u64) {
+    let Some((target_group_id, target_chat_id)) = registry::config().plan_chat_clean_target() else {
+        return;
+    };
+
+    if message.chat_group_id != target_group_id || message.chat_id != target_chat_id {
+        return;
+    }
+
+    if u64::from(message.sender_steam_id) == bot_steam_id {
+        return;
+    }
+
+    if message.timestamp == 0 {
+        return;
+    }
+
+    let server_timestamp = message.timestamp;
+    let ordinal = message.ordinal;
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move {
+                if let Err(e) = MessageSender::delete_group_message_by_id_global(
+                    target_group_id,
+                    target_chat_id,
+                    server_timestamp,
+                    ordinal,
+                )
+                .await
+                {
+                    eprintln!("Failed to delete message from dedicated planning chat: {}", e);
+                }
+            });
+        }
+        Err(e) => {
+            eprintln!("Failed to get runtime handle for dedicated chat cleanup: {}", e);
         }
     }
 }
@@ -453,6 +495,7 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
     let message_cloned = message.clone();
     let args_cloned = args.clone();
     let command_cloned = command.clone();
+    let is_plan_command = command_lower == "plan" || command_lower == "p";
 
     // Spawn async task to handle the command and send response
     match tokio::runtime::Handle::try_current() {
@@ -480,9 +523,21 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
                     Ok(None) => return, // Command not found, should probably not happen if we checked before
                     Err(e) => e.to_string(), // Use the user-friendly error message
                 };
+
+                let (target_chat_group_id, target_chat_id) = if is_plan_command {
+                    registry::config()
+                        .effective_plan_chat()
+                        .unwrap_or((chat_group_id, chat_id))
+                } else {
+                    (chat_group_id, chat_id)
+                };
                 
                 // Send the actual response
-                if let Err(e) = MessageSender::send_to_chat_global(&response, chat_group_id, chat_id).await {
+                if let Err(e) = MessageSender::send_to_chat_global(
+                    &response,
+                    target_chat_group_id,
+                    target_chat_id,
+                ).await {
                     eprintln!("Failed to send command response: {}", e);
                 }
                 

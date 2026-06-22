@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use chrono::{NaiveDateTime, NaiveTime, TimeZone};
 use chrono_tz::Europe::Warsaw;
 use async_trait::async_trait;
+use steam_rs::{steam_id::SteamId, Steam};
 
 // Constants for time validation and formatting
 const MAX_HOURS: u8 = 23;
@@ -813,7 +814,7 @@ struct PlanArgs<'a> {
 #[async_trait]
 impl CommandHandler for PlanCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
-        Ok(Self::execute_plan(ctx.args).await)
+        Ok(Self::execute_plan(ctx.args, Some(ctx.sender_id)).await)
     }
     
     fn metadata(&self) -> &CommandMetadata {
@@ -931,10 +932,49 @@ impl PlanCommand {
         }
     }
 
+    async fn plan_actor_mention(actor: Option<u64>) -> Option<String> {
+        let Some(actor_steam_id_u64) = actor else {
+            return None;
+        };
+
+        let config = registry::config();
+        if !config.plan_mention_user {
+            return None;
+        }
+        if config.steam_web_api_key.trim().is_empty() {
+            eprintln!(
+                "Warning: steam.chat.plan_mention_user is enabled but steam.web_api_key is empty. Skipping user mention."
+            );
+            return None;
+        }
+
+        let steam = Steam::new(&config.steam_web_api_key);
+        let actor_steam_id = SteamId::new(actor_steam_id_u64);
+        let caller_name = match tokio::time::timeout(
+            tokio::time::Duration::from_millis(800),
+            steam.get_player_summaries(vec![actor_steam_id]),
+        )
+        .await
+        {
+            Ok(Ok(response)) => response.first().map(|player| player.persona_name.clone()),
+            Ok(Err(e)) => {
+                eprintln!("Failed to resolve plan caller name for mention: {}", e);
+                None
+            }
+            Err(_) => {
+                eprintln!("Timed out resolving plan caller name for mention");
+                None
+            }
+        }?;
+
+        let account_id = actor_steam_id.get_account_id();
+        Some(format!("[mention={}]@{}[/mention]", account_id, caller_name))
+    }
+
     /// Internal implementation of the plan command logic
     /// 
     /// This method is shared between execute() and execute_async_owned() to avoid code duplication.
-    async fn execute_plan(args: &str) -> String {
+    async fn execute_plan(args: &str, actor: Option<u64>) -> String {
         let parsed_args = match Self::parse_args(args) {
             Ok(parsed_args) => parsed_args,
             Err(error) => return error,
@@ -942,6 +982,7 @@ impl PlanCommand {
         
         // Check for clear command
         if parsed_args.clear {
+            let actor_mention = Self::plan_actor_mention(actor).await;
             #[cfg(feature = "rest_api")]
             {
                 if let Some(server_id) = parsed_args.server_id {
@@ -952,7 +993,11 @@ impl PlanCommand {
                     let removed =
                         crate::steam_bot::plan_broadcast::clear_targeted_reservation_for_ip(&ip);
                     return if removed {
-                        format!("Reservation cleared for server {}.", server_id)
+                        match actor_mention.as_deref() {
+                            Some(actor_mention) =>
+                                format!("{} cleared the reservation for server {}.", actor_mention, server_id),
+                            None => format!("Reservation cleared for server {}.", server_id),
+                        }
                     } else if crate::steam_bot::plan_broadcast::get_current_timestamp().is_some() {
                         format!(
                             "No targeted reservation for server {}. A global reservation is active; use !plan clear to clear all.",
@@ -964,7 +1009,10 @@ impl PlanCommand {
                 }
                 crate::steam_bot::plan_broadcast::clear_reservation();
             }
-            return "Reservation cleared.".to_string();
+            return match actor_mention.as_deref() {
+                Some(actor_mention) => format!("{} cleared the reservation.", actor_mention),
+                None => "Reservation cleared.".to_string(),
+            };
         }
         
         // Parse the time string
@@ -1038,6 +1086,8 @@ impl PlanCommand {
 
         // Convert to CET time format
         let time_str = unix_timestamp_to_cet_time(timestamp);
+        let actor_mention = Self::plan_actor_mention(actor).await;
+        let actor_mention = actor_mention.as_deref();
 
         // Return formatted message
         match targeted {
@@ -1045,7 +1095,31 @@ impl PlanCommand {
                 let server_name =
                     Self::query_targeted_server_name(&server_ip, server_port).await;
 
-                if is_replan {
+                if let Some(actor_mention) = actor_mention {
+                    if is_replan {
+                        match server_name {
+                            Some(server_name) => format!(
+                                "{} re-planned lobby time at {} for server {}\nServer: {} | IP: {}:{}",
+                                actor_mention, time_str, server_id, server_name, server_ip, server_port
+                            ),
+                            None => format!(
+                                "{} re-planned lobby time at {} for server {}\nServer IP: {}:{}",
+                                actor_mention, time_str, server_id, server_ip, server_port
+                            ),
+                        }
+                    } else {
+                        match server_name {
+                            Some(server_name) => format!(
+                                "{} planned lobby time at {} for server {} [mention=all]@all[/mention]\nServer: {} | IP: {}:{}",
+                                actor_mention, time_str, server_id, server_name, server_ip, server_port
+                            ),
+                            None => format!(
+                                "{} planned lobby time at {} for server {} [mention=all]@all[/mention]\nServer IP: {}:{}",
+                                actor_mention, time_str, server_id, server_ip, server_port
+                            ),
+                        }
+                    }
+                } else if is_replan {
                     match server_name {
                         Some(server_name) => format!(
                             "Re-planned lobby time for server {}: {}\nServer: {} | IP: {}:{}",
@@ -1069,8 +1143,22 @@ impl PlanCommand {
                     }
                 }
             }
-            None if is_replan => format!("Re-planned lobby time: {}", time_str),
-            None => format!("Planned lobby time: {} [mention=all]@all[/mention]", time_str),
+            None => {
+                if let Some(actor_mention) = actor_mention {
+                    if is_replan {
+                        format!("{} re-planned lobby time at {}", actor_mention, time_str)
+                    } else {
+                        format!(
+                            "{} planned lobby time at {} [mention=all]@all[/mention]",
+                            actor_mention, time_str
+                        )
+                    }
+                } else if is_replan {
+                    format!("Re-planned lobby time: {}", time_str)
+                } else {
+                    format!("Planned lobby time: {} [mention=all]@all[/mention]", time_str)
+                }
+            }
         }
     }
 }

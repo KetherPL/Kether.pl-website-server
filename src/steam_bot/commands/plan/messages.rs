@@ -7,6 +7,7 @@ pub(super) struct PlanMessageContext {
     pub server_ip: Option<String>,
     pub server_port: Option<u16>,
     pub server_name: Option<String>,
+    pub requested_map: Option<String>,
     pub is_replan: bool,
 }
 
@@ -48,16 +49,19 @@ pub(super) fn format_clear_response(actor_mention: Option<&str>, result: ClearRe
     }
 }
 
-pub(super) fn format_plan_response(ctx: PlanMessageContext) -> String {
+fn format_plan_body(ctx: &PlanMessageContext) -> String {
     if let Some(server_id) = ctx.server_id {
-        let server_ip = ctx.server_ip.expect("server_ip required when server_id is set");
+        let server_ip = ctx
+            .server_ip
+            .as_deref()
+            .expect("server_ip required when server_id is set");
         let server_port = ctx
             .server_port
             .expect("server_port required when server_id is set");
 
-        if let Some(actor_mention) = &ctx.actor_mention {
+        if let Some(actor_mention) = ctx.actor_mention.as_deref() {
             if ctx.is_replan {
-                return match ctx.server_name {
+                return match ctx.server_name.as_deref() {
                     Some(server_name) => format!(
                         "{} re-planned lobby time at {} for server {}\nServer: {} | IP: {}:{}",
                         actor_mention, ctx.time_str, server_id, server_name, server_ip, server_port
@@ -69,7 +73,7 @@ pub(super) fn format_plan_response(ctx: PlanMessageContext) -> String {
                 };
             }
 
-            return match ctx.server_name {
+            return match ctx.server_name.as_deref() {
                 Some(server_name) => format!(
                     "{} planned lobby time at {} for server {} [mention=all]@all[/mention]\nServer: {} | IP: {}:{}",
                     actor_mention, ctx.time_str, server_id, server_name, server_ip, server_port
@@ -82,7 +86,7 @@ pub(super) fn format_plan_response(ctx: PlanMessageContext) -> String {
         }
 
         if ctx.is_replan {
-            return match ctx.server_name {
+            return match ctx.server_name.as_deref() {
                 Some(server_name) => format!(
                     "Re-planned lobby time for server {}: {}\nServer: {} | IP: {}:{}",
                     server_id, ctx.time_str, server_name, server_ip, server_port
@@ -94,7 +98,7 @@ pub(super) fn format_plan_response(ctx: PlanMessageContext) -> String {
             };
         }
 
-        return match ctx.server_name {
+        return match ctx.server_name.as_deref() {
             Some(server_name) => format!(
                 "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer: {} | IP: {}:{}",
                 server_id, ctx.time_str, server_name, server_ip, server_port
@@ -106,7 +110,7 @@ pub(super) fn format_plan_response(ctx: PlanMessageContext) -> String {
         };
     }
 
-    if let Some(actor_mention) = &ctx.actor_mention {
+    if let Some(actor_mention) = ctx.actor_mention.as_deref() {
         if ctx.is_replan {
             format!("{} re-planned lobby time at {}", actor_mention, ctx.time_str)
         } else {
@@ -123,4 +127,14 @@ pub(super) fn format_plan_response(ctx: PlanMessageContext) -> String {
             ctx.time_str
         )
     }
+}
+
+pub(super) fn format_plan_response(ctx: PlanMessageContext) -> String {
+    let mut response = format_plan_body(&ctx);
+    if let Some(requested_map) = ctx.requested_map {
+        response.push('\n');
+        response.push_str("Requested map: ");
+        response.push_str(&requested_map);
+    }
+    response
 }

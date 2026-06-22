@@ -22,6 +22,7 @@ struct PlanCommand;
 struct PlanArgs<'a> {
     time_str: &'a str,
     server_id: Option<u8>,
+    map: Option<String>,
     clear: bool,
 }
 
@@ -36,7 +37,7 @@ impl CommandHandler for PlanCommand {
             name: "plan",
             aliases: &["p"],
             description: "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-            usage: Some("!plan <time> [1|2] | !plan clear [1|2]"),
+            usage: Some("!plan <time> [1|2] [m <map>] | !plan clear [1|2]"),
         };
         &METADATA
     }
@@ -47,21 +48,21 @@ inventory::submit! {
         "plan",
         &["p"],
         "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-        Some("!plan <time> [1|2] | !plan clear [1|2]"),
+        Some("!plan <time> [1|2] [m <map>] | !plan clear [1|2]"),
         || Box::new(PlanCommand)
     )
 }
 
 impl PlanCommand {
     fn usage_hint() -> &'static str {
-        "!plan <time> [1|2] | !plan clear [1|2]"
+        "!plan <time> [1|2] [m <map>] | !plan clear [1|2]"
     }
 
     fn parse_args(args: &str) -> Result<PlanArgs<'_>, String> {
         let trimmed = args.trim();
         if trimmed.is_empty() {
             return Err(format!(
-                "Usage: {} (e.g., !plan 19:00, !plan 19:00 2, !plan clear, !plan clear 1)",
+                "Usage: {} (e.g., !plan 19:00, !plan 19:00 2, !plan 19:00 m No Mercy, !plan clear, !plan clear 1)",
                 Self::usage_hint()
             ));
         }
@@ -72,6 +73,7 @@ impl PlanCommand {
                 Ok(PlanArgs {
                     time_str: "",
                     server_id: None,
+                    map: None,
                     clear: true,
                 })
             }
@@ -89,35 +91,52 @@ impl PlanCommand {
                 Ok(PlanArgs {
                     time_str: "",
                     server_id: Some(server_id),
+                    map: None,
                     clear: true,
                 })
             }
-            [time_str] => Ok(PlanArgs {
-                time_str,
-                server_id: None,
-                clear: false,
-            }),
-            [time_str, "1"] => Ok(PlanArgs {
-                time_str,
-                server_id: Some(1),
-                clear: false,
-            }),
-            [time_str, "2"] => Ok(PlanArgs {
-                time_str,
-                server_id: Some(2),
-                clear: false,
-            }),
-            [time_str, _] => {
-                if parse_time_string(time_str).is_ok() {
-                    Err(format!("Invalid server id. Usage: {}", Self::usage_hint()))
-                } else {
-                    Err(
-                        "Invalid time format. Use HH:MM, HH.MM, or HH (e.g., 19:00, 18.30, or 16)"
-                            .to_string(),
-                    )
+            [time_str, rest @ ..] => {
+                let mut server_id = None;
+                let mut map = None;
+                let mut index = 0usize;
+
+                while index < rest.len() {
+                    let token = rest[index];
+                    if token.eq_ignore_ascii_case("m") || token.eq_ignore_ascii_case("map") {
+                        if index + 1 >= rest.len() {
+                            return Err(format!(
+                                "Map name is required after 'm'/'map'. Usage: {}",
+                                Self::usage_hint()
+                            ));
+                        }
+                        map = Some(rest[index + 1..].join(" "));
+                        break;
+                    }
+
+                    if (token == "1" || token == "2") && server_id.is_none() {
+                        server_id = Some(if token == "1" { 1 } else { 2 });
+                        index += 1;
+                        continue;
+                    }
+
+                    return if parse_time_string(time_str).is_ok() {
+                        Err(format!("Invalid server id. Usage: {}", Self::usage_hint()))
+                    } else {
+                        Err(
+                            "Invalid time format. Use HH:MM, HH.MM, or HH (e.g., 19:00, 18.30, or 16)"
+                                .to_string(),
+                        )
+                    };
                 }
+
+                Ok(PlanArgs {
+                    time_str,
+                    server_id,
+                    map,
+                    clear: false,
+                })
             }
-            _ => Err(format!("Invalid arguments. Usage: {}", Self::usage_hint())),
+            [] => Err(format!("Invalid arguments. Usage: {}", Self::usage_hint())),
         }
     }
 
@@ -225,6 +244,7 @@ impl PlanCommand {
             server_ip,
             server_port,
             server_name,
+            requested_map: parsed_args.map,
             is_replan,
         })
     }
@@ -335,5 +355,35 @@ mod tests {
     fn test_plan_args_clear_invalid_server_id() {
         let err = PlanCommand::parse_args("clear 9").unwrap_err();
         assert!(err.contains("Invalid server id after clear"));
+    }
+
+    #[test]
+    fn test_plan_args_map_only() {
+        let args = PlanCommand::parse_args("19:00 m No Mercy").unwrap();
+        assert!(!args.clear);
+        assert!(args.server_id.is_none());
+        assert_eq!(args.map.as_deref(), Some("No Mercy"));
+    }
+
+    #[test]
+    fn test_plan_args_server_and_map() {
+        let args = PlanCommand::parse_args("19:00 1 m No Mercy").unwrap();
+        assert!(!args.clear);
+        assert_eq!(args.server_id, Some(1));
+        assert_eq!(args.map.as_deref(), Some("No Mercy"));
+    }
+
+    #[test]
+    fn test_plan_args_map_keyword_long_form() {
+        let args = PlanCommand::parse_args("19:00 map de_dust").unwrap();
+        assert!(!args.clear);
+        assert!(args.server_id.is_none());
+        assert_eq!(args.map.as_deref(), Some("de_dust"));
+    }
+
+    #[test]
+    fn test_plan_args_map_requires_name() {
+        let err = PlanCommand::parse_args("19:00 m").unwrap_err();
+        assert!(err.contains("Map name is required"));
     }
 }

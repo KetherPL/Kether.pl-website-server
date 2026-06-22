@@ -990,6 +990,18 @@ impl PlanCommand {
             None => None,
         };
 
+        #[cfg(feature = "rest_api")]
+        {
+            let existing_timestamp = match &targeted {
+                Some((_, ip, _)) => crate::steam_bot::plan_broadcast::get_targeted_timestamp(ip),
+                None => crate::steam_bot::plan_broadcast::get_current_timestamp(),
+            };
+            if existing_timestamp == Some(timestamp) {
+                let time_str = unix_timestamp_to_cet_time(timestamp);
+                return format!("Lobby is already planned at {}", time_str);
+            }
+        }
+
         // Check for existing reservation before setting new one
         let is_replan = {
             #[cfg(feature = "rest_api")]

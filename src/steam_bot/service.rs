@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::steam_bot::bot::SteamBot;
 use crate::steam_bot::connection::ConnectionManager;
+use crate::steam_bot::discovery;
 use crate::steam_bot::registry;
 use colored::Colorize;
 use std::sync::Arc;
@@ -86,24 +87,14 @@ impl SteamBotService {
     /// # Arguments
     /// * `bot` - Reference to the SteamBot instance
     async fn list_chat_rooms(bot: &SteamBot) {
-        let session_guard = bot.session.lock().await;
-        if let Some(ref session) = *session_guard {
-            match session.chat().get_my_chat_rooms().await {
-                Ok(chat_rooms) => {
-                    println!("{} Found {} chat room(s):", "✓".green(), chat_rooms.len());
-                    for (i, room) in chat_rooms.iter().enumerate() {
-                        println!("  {}. {} (Group: {})", i + 1, room.chat_name.bold(), room.chat_group_name.bold());
-                        println!("     Group ID: {}, Chat ID: {}", room.chat_group_id.to_string().bold(), room.chat_id.to_string().bold());
-                    }
-                    println!("\nTo enable Call For Sub, update config.toml with:");
-                    println!("  [steam.chat]");
-                    println!("  group_id = <Group ID from above>");
-                    println!("  chat_id = <Chat ID from above>");
-                }
-                Err(e) => {
-                    println!("{} Failed to get chat rooms: {:?}", "✗".red(), e);
-                }
+        match discovery::list_groups_and_chats_for_bot(bot).await {
+            Ok(()) => {
+                println!("To enable Call For Sub, update config.toml with:");
+                println!("  [steam.chat]");
+                println!("  group_id = <Group ID from above>");
+                println!("  chat_id = <Chat ID from above>");
             }
+            Err(e) => println!("{} {}", "✗".red(), e),
         }
     }
 

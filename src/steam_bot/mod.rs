@@ -36,6 +36,7 @@
 mod bot;
 mod commands;
 mod connection;
+mod discovery;
 mod listener;
 mod messaging;
 pub mod plan_broadcast;
@@ -46,6 +47,7 @@ mod utils;
 
 // Re-export public types and functions
 pub use bot::SteamBot;
+pub use discovery::list_groups_and_chats;
 pub use messaging::MessageSender;
 
 /// Main entry point for the SteamBot service

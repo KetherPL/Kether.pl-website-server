@@ -51,6 +51,7 @@ impl Repl {
     /// The REPL supports the following commands:
     /// - `quit` / `exit` - Exit the REPL
     /// - `help` - Show available commands
+    /// - `chats` / `list-chats` / `G` - List Steam chat groups and chats (when SteamBot is enabled)
     /// - Empty input - Ignored (no-op)
     /// 
     /// # Returns
@@ -75,6 +76,23 @@ impl Repl {
                                 println!("  q, quit, exit - Exit the REPL");
                                 println!("  R, restart - Restart the daemon");
                                 println!("  S, stop - Stop the daemon");
+                                #[cfg(feature = "rest_call_for_sub")]
+                                println!("  g, chats, groups - List Steam chat groups and chats");
+                            }
+                            "g" | "chats" | "groups" => {
+                                #[cfg(feature = "rest_call_for_sub")]
+                                {
+                                    match tokio::runtime::Handle::current()
+                                        .block_on(crate::steam_bot::list_groups_and_chats())
+                                    {
+                                        Ok(()) => {}
+                                        Err(e) => eprintln!("{}", e),
+                                    }
+                                }
+                                #[cfg(not(feature = "rest_call_for_sub"))]
+                                {
+                                    eprintln!("Steam chat listing is not available in this build.");
+                                }
                             }
                             "R" | "restart" => {
                                 match &self.daemon_command_tx {

@@ -53,3 +53,17 @@ plan_chat_keep_clean = false
 
 # If true, planning messages mention the user who executed the command
 plan_mention_user = false
+
+# Dedicated chat room id for poll/question messages (!poll / !q)
+# Uses the same steam.chat.group_id; set to 0 to disable
+poll_chat_id = 0
+
+# If true, poll command responses are posted only to poll_chat_id
+# If poll_chat_id is 0, this behaves as disabled
+dedicated_poll_chat = false
+
+# If true, removes the invoking user command message after poll posting
+poll_chat_remove_command_message = false
+
+# If true, poll question messages mention the user who executed the command
+poll_mention_user = false

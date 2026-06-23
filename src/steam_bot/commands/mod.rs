@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 mod help;
 mod plan;
+mod poll;
 mod test;
 #[cfg(feature = "server_query")]
 mod status;

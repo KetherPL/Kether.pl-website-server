@@ -532,12 +532,15 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
                     (chat_group_id, chat_id)
                 };
                 
-                // Send the actual response
-                if let Err(e) = MessageSender::send_to_chat_global(
-                    &response,
-                    target_chat_group_id,
-                    target_chat_id,
-                ).await {
+                // Send the actual response unless command explicitly returned empty output.
+                if !response.trim().is_empty()
+                    && let Err(e) = MessageSender::send_to_chat_global(
+                        &response,
+                        target_chat_group_id,
+                        target_chat_id,
+                    )
+                    .await
+                {
                     eprintln!("Failed to send command response: {}", e);
                 }
                 

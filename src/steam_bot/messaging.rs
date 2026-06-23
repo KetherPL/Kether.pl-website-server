@@ -5,7 +5,7 @@ use crate::steam_bot::bot::SteamBot;
 use crate::steam_bot::connection::ConnectionManager;
 use crate::steam_bot::registry;
 use crate::steam_bot::utils::is_connection_error;
-use SC_Sub_Poster::{SendGroupMessageParams, PreprocessedMessage};
+use SC_Sub_Poster::{PreprocessedMessage, ReactionType, SendGroupMessageParams};
 
 /// Small delay before delete so the echoed message is committed server-side.
 const DELETE_SETTLE_DELAY_MS: u64 = 500;
@@ -263,6 +263,76 @@ impl MessageSender {
         };
         let config = registry::config();
         Self::send_to_chat_with_recovery_preprocessed(&steam_bot, message, chat_group_id, chat_id, &config).await
+    }
+
+    /// Adds an emoticon reaction to an existing message using the global SteamBot instance.
+    pub async fn add_emoticon_reaction_global(
+        chat_group_id: u64,
+        chat_id: u64,
+        server_timestamp: u32,
+        ordinal: u32,
+        reaction: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if server_timestamp == 0 {
+            return Err("Cannot add reaction: server_timestamp is zero".into());
+        }
+
+        let Some(steam_bot) = registry::bot() else {
+            return Err("SteamBot not initialized".into());
+        };
+
+        let session_guard = steam_bot.session.lock().await;
+        let Some(ref session) = *session_guard else {
+            return Err("SteamBot not fully initialized. Please login first.".into());
+        };
+
+        session
+            .chat()
+            .add_message_reaction(
+                chat_group_id,
+                chat_id,
+                server_timestamp,
+                ordinal,
+                ReactionType::Emoticon,
+                reaction,
+            )
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to add reaction '{}' (group: {}, chat: {}, ts: {}, ordinal: {}): {}",
+                    reaction, chat_group_id, chat_id, server_timestamp, ordinal, e
+                )
+            })?;
+
+        Ok(())
+    }
+
+    /// Adds an emoticon reaction to a message represented by a `PreprocessedMessage`.
+    pub async fn add_emoticon_reaction_from_preprocessed_global(
+        chat_group_id: u64,
+        chat_id: u64,
+        preprocessed: &PreprocessedMessage,
+        reaction: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let server_timestamp = preprocessed.server_timestamp.unwrap_or(0);
+        let ordinal = preprocessed.ordinal.unwrap_or(0);
+
+        if server_timestamp == 0 {
+            return Err(format!(
+                "Cannot add reaction '{}': server_timestamp is unavailable (ordinal: {}).",
+                reaction, ordinal
+            )
+            .into());
+        }
+
+        Self::add_emoticon_reaction_global(
+            chat_group_id,
+            chat_id,
+            server_timestamp,
+            ordinal,
+            reaction,
+        )
+        .await
     }
 
     /// Sends a message to a specific Steam group chat room with automatic recovery (returns PreprocessedMessage)

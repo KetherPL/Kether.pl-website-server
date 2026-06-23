@@ -86,6 +86,22 @@ struct ChatConfig {
 	/// Whether to mention the user who executed !plan
 	#[serde(default)]
 	plan_mention_user: bool,
+
+	/// Dedicated chat ID for poll command responses
+	#[serde(default)]
+	poll_chat_id: u64,
+
+	/// Whether dedicated poll chat routing is enabled
+	#[serde(default)]
+	dedicated_poll_chat: bool,
+
+	/// Whether poll command invocations should be deleted after posting poll messages
+	#[serde(default)]
+	poll_chat_remove_command_message: bool,
+
+	/// Whether to mention the user who executed !poll
+	#[serde(default)]
+	poll_mention_user: bool,
 }
 
 /// L4D2 server configuration
@@ -150,6 +166,10 @@ impl Default for ChatConfig {
 			dedicated_plan_chat: false,
 			plan_chat_keep_clean: false,
 			plan_mention_user: false,
+			poll_chat_id: 0,
+			dedicated_poll_chat: false,
+			poll_chat_remove_command_message: false,
+			poll_mention_user: false,
 		}
 	}
 }
@@ -174,6 +194,10 @@ impl Default for ServerConfig {
 /// * `dedicated_plan_chat` - Whether dedicated planning chat routing is enabled
 /// * `plan_chat_keep_clean` - Whether non-bot messages should be removed from dedicated planning chat
 /// * `plan_mention_user` - Whether planning messages mention the executing user
+/// * `poll_chat_id` - Dedicated chat ID for poll responses
+/// * `dedicated_poll_chat` - Whether dedicated poll chat routing is enabled
+/// * `poll_chat_remove_command_message` - Whether poll command messages should be removed after posting polls
+/// * `poll_mention_user` - Whether poll messages mention the executing user
 /// * `steam_account` - Steam account username for bot login
 /// * `steam_password` - Steam account password for bot login
 /// * `server_ip` - IP address of the L4D2 server
@@ -188,6 +212,10 @@ pub struct Config {
 	pub dedicated_plan_chat: bool,
 	pub plan_chat_keep_clean: bool,
 	pub plan_mention_user: bool,
+	pub poll_chat_id: u64,
+	pub dedicated_poll_chat: bool,
+	pub poll_chat_remove_command_message: bool,
+	pub poll_mention_user: bool,
 	pub steam_account: String,
 	pub steam_password: String,
 	pub server_ip: String,
@@ -271,6 +299,10 @@ impl Config {
 			dedicated_plan_chat: config_file.steam.chat.dedicated_plan_chat,
 			plan_chat_keep_clean: config_file.steam.chat.plan_chat_keep_clean,
 			plan_mention_user: config_file.steam.chat.plan_mention_user,
+			poll_chat_id: config_file.steam.chat.poll_chat_id,
+			dedicated_poll_chat: config_file.steam.chat.dedicated_poll_chat,
+			poll_chat_remove_command_message: config_file.steam.chat.poll_chat_remove_command_message,
+			poll_mention_user: config_file.steam.chat.poll_mention_user,
 			steam_account: config_file.steam.bot.username,
 			steam_password: config_file.steam.bot.password,
 			server_ip: config_file.server.ip,
@@ -316,6 +348,20 @@ impl Config {
 		}
 		if self.plan_mention_user != new.plan_mention_user {
 			change.live_applied.push("steam.chat.plan_mention_user");
+		}
+		if self.poll_chat_id != new.poll_chat_id {
+			change.live_applied.push("steam.chat.poll_chat_id");
+		}
+		if self.dedicated_poll_chat != new.dedicated_poll_chat {
+			change.live_applied.push("steam.chat.dedicated_poll_chat");
+		}
+		if self.poll_chat_remove_command_message != new.poll_chat_remove_command_message {
+			change
+				.live_applied
+				.push("steam.chat.poll_chat_remove_command_message");
+		}
+		if self.poll_mention_user != new.poll_mention_user {
+			change.live_applied.push("steam.chat.poll_mention_user");
 		}
 		if self.steam_account != new.steam_account {
 			change.requires_restart.push("steam.bot.username");
@@ -391,6 +437,20 @@ plan_chat_keep_clean = false
 
 # If true, planning messages mention the user who executed the command
 plan_mention_user = false
+
+# Dedicated chat room id for poll messages (!poll / !q)
+# Uses the same steam.chat.group_id; set to 0 to disable
+poll_chat_id = 0
+
+# If true, poll command responses are posted only to poll_chat_id
+# If poll_chat_id is 0, this behaves as disabled
+dedicated_poll_chat = false
+
+# If true, removes the invoking user command message after poll posting
+poll_chat_remove_command_message = false
+
+# If true, poll question messages mention the user who executed the command
+poll_mention_user = false
 "#.to_string()
 	}
 	
@@ -487,6 +547,16 @@ plan_mention_user = false
 	pub fn effective_plan_chat(&self) -> Option<(u64, u64)> {
 		(self.dedicated_plan_chat && self.plan_chat_id != 0)
 			.then_some((self.chat_group_id, self.plan_chat_id))
+	}
+
+	/// Returns dedicated poll chat target when feature is enabled and configured.
+	///
+	/// # Returns
+	/// `Some((chat_group_id, poll_chat_id))` when dedicated poll chat is enabled and chat id is set,
+	/// otherwise `None`.
+	pub fn effective_poll_chat(&self) -> Option<(u64, u64)> {
+		(self.dedicated_poll_chat && self.poll_chat_id != 0)
+			.then_some((self.chat_group_id, self.poll_chat_id))
 	}
 
 	/// Returns dedicated planning chat target for clean-up when feature is enabled and configured.
@@ -599,6 +669,10 @@ plan_chat_id = 4321
 dedicated_plan_chat = true
 plan_chat_keep_clean = true
 plan_mention_user = true
+poll_chat_id = 8765
+dedicated_poll_chat = true
+poll_chat_remove_command_message = true
+poll_mention_user = true
 "#
 	}
 
@@ -613,6 +687,10 @@ plan_mention_user = true
 		assert!(parsed.dedicated_plan_chat);
 		assert!(parsed.plan_chat_keep_clean);
 		assert!(parsed.plan_mention_user);
+		assert_eq!(parsed.poll_chat_id, 8765);
+		assert!(parsed.dedicated_poll_chat);
+		assert!(parsed.poll_chat_remove_command_message);
+		assert!(parsed.poll_mention_user);
 		assert_eq!(parsed.steam_account, "bot_user");
 		assert_eq!(parsed.steam_password, "bot_pass");
 		assert_eq!(parsed.server_ip, "127.0.0.1");
@@ -635,6 +713,10 @@ plan_mention_user = true
 		assert!(!parsed.dedicated_plan_chat);
 		assert!(!parsed.plan_chat_keep_clean);
 		assert!(!parsed.plan_mention_user);
+		assert_eq!(parsed.poll_chat_id, 0);
+		assert!(!parsed.dedicated_poll_chat);
+		assert!(!parsed.poll_chat_remove_command_message);
+		assert!(!parsed.poll_mention_user);
 		assert!(!parsed.steam_bot_commands_without_mention);
 	}
 
@@ -694,6 +776,19 @@ plan_mention_user = true
 		config.plan_chat_keep_clean = true;
 		config.plan_chat_id = 0;
 		assert_eq!(config.plan_chat_clean_target(), None);
+	}
+
+	#[test]
+	fn effective_poll_chat_requires_enabled_and_chat_id() {
+		let mut config = Config::from_toml_str(full_toml()).expect("config");
+		assert_eq!(config.effective_poll_chat(), Some((1234, 8765)));
+
+		config.dedicated_poll_chat = false;
+		assert_eq!(config.effective_poll_chat(), None);
+
+		config.dedicated_poll_chat = true;
+		config.poll_chat_id = 0;
+		assert_eq!(config.effective_poll_chat(), None);
 	}
 
 	#[test]

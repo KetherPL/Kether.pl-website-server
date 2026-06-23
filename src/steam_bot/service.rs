@@ -124,6 +124,12 @@ impl SteamBotService {
                 "Warning: steam.chat.plan_chat_keep_clean is enabled but steam.chat.plan_chat_id is not set. Dedicated planning chat cleanup stays disabled."
             );
         }
+
+        if config.dedicated_poll_chat && config.poll_chat_id == 0 {
+            eprintln!(
+                "Warning: steam.chat.dedicated_poll_chat is enabled but steam.chat.poll_chat_id is not set. Dedicated poll chat stays disabled."
+            );
+        }
     }
 
     async fn run_active_mode(

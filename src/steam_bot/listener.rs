@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::steam_bot::bot::SteamBot;
+use crate::steam_bot::commands::command_response_target;
 use crate::steam_bot::commands::CommandRegistry;
 use crate::steam_bot::connection::ConnectionManager;
 use crate::steam_bot::messaging::MessageSender;
@@ -495,7 +496,6 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
     let message_cloned = message.clone();
     let args_cloned = args.clone();
     let command_cloned = command.clone();
-    let is_plan_command = command_lower == "plan" || command_lower == "p";
 
     // Spawn async task to handle the command and send response
     match tokio::runtime::Handle::try_current() {
@@ -518,28 +518,30 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
                 
                 // Execute the command via registry
                 let registry = CommandRegistry::new();
-                let response = match registry.handle(&command_cloned, &args_cloned, &message_cloned).await {
-                    Ok(Some(res)) => res,
-                    Ok(None) => return, // Command not found, should probably not happen if we checked before
-                    Err(e) => e.to_string(), // Use the user-friendly error message
+                let handle_result = registry
+                    .handle(&command_cloned, &args_cloned, &message_cloned)
+                    .await;
+
+                let response_text = match &handle_result {
+                    Ok(None) => return,
+                    Ok(Some(response)) if response.trim().is_empty() => return,
+                    Ok(Some(response)) => response.clone(),
+                    Err(error) => error.to_string(),
                 };
 
-                let (target_chat_group_id, target_chat_id) = if is_plan_command {
-                    registry::config()
-                        .effective_plan_chat()
-                        .unwrap_or((chat_group_id, chat_id))
-                } else {
-                    (chat_group_id, chat_id)
-                };
-                
-                // Send the actual response unless command explicitly returned empty output.
-                if !response.trim().is_empty()
-                    && let Err(e) = MessageSender::send_to_chat_global(
-                        &response,
-                        target_chat_group_id,
-                        target_chat_id,
-                    )
-                    .await
+                let (target_chat_group_id, target_chat_id) = command_response_target(
+                    &command_cloned,
+                    &handle_result,
+                    chat_group_id,
+                    chat_id,
+                );
+
+                if let Err(e) = MessageSender::send_to_chat_global(
+                    &response_text,
+                    target_chat_group_id,
+                    target_chat_id,
+                )
+                .await
                 {
                     eprintln!("Failed to send command response: {}", e);
                 }

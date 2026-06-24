@@ -4,6 +4,8 @@ use SC_Sub_Poster::EnhancedGroupChatMessage;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+use crate::steam_bot::registry;
+
 mod help;
 mod plan;
 mod poll;
@@ -259,9 +261,64 @@ impl CommandRegistry {
     }
 }
 
+/// Resolves the chat target for a command response.
+///
+/// Usage and validation errors for plan/poll stay in the invoking chat even when
+/// dedicated chat routing is enabled. Successful plan responses route to the
+/// dedicated planning chat when configured.
+pub fn command_response_target(
+    command: &str,
+    result: &Result<Option<String>, CommandError>,
+    source_group: u64,
+    source_chat: u64,
+) -> (u64, u64) {
+    command_response_target_with_plan_chat(
+        command,
+        result,
+        source_group,
+        source_chat,
+        registry::config().effective_plan_chat(),
+    )
+}
+
+pub(crate) fn command_response_target_with_plan_chat(
+    command: &str,
+    result: &Result<Option<String>, CommandError>,
+    source_group: u64,
+    source_chat: u64,
+    plan_target: Option<(u64, u64)>,
+) -> (u64, u64) {
+    let command_lower = command.to_lowercase();
+    let is_plan = matches!(command_lower.as_str(), "plan" | "p");
+    let is_poll = matches!(command_lower.as_str(), "poll" | "q");
+
+    if result.is_err() && (is_plan || is_poll) {
+        return (source_group, source_chat);
+    }
+
+    if is_plan {
+        return plan_target.unwrap_or((source_group, source_chat));
+    }
+
+    (source_group, source_chat)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SOURCE_GROUP: u64 = 100;
+    const SOURCE_CHAT: u64 = 200;
+    const DEDICATED_GROUP: u64 = 300;
+    const DEDICATED_CHAT: u64 = 400;
+
+    fn ok_response(text: &str) -> Result<Option<String>, CommandError> {
+        Ok(Some(text.to_string()))
+    }
+
+    fn err_response(text: &str) -> Result<Option<String>, CommandError> {
+        Err(CommandError::InvalidArguments(text.to_string()))
+    }
 
     #[test]
     fn test_command_registry_registration() {
@@ -275,5 +332,53 @@ mod tests {
             .collect();
         assert!(names.contains(&"!help".to_string()) || names.contains(&"!h".to_string()));
         assert!(names.contains(&"!plan".to_string()) || names.contains(&"!p".to_string()));
+    }
+
+    #[test]
+    fn plan_error_routes_to_source_chat_when_dedicated_enabled() {
+        let target = command_response_target_with_plan_chat(
+            "plan",
+            &err_response("Usage: ..."),
+            SOURCE_GROUP,
+            SOURCE_CHAT,
+            Some((DEDICATED_GROUP, DEDICATED_CHAT)),
+        );
+        assert_eq!(target, (SOURCE_GROUP, SOURCE_CHAT));
+    }
+
+    #[test]
+    fn plan_success_routes_to_dedicated_chat_when_enabled() {
+        let target = command_response_target_with_plan_chat(
+            "p",
+            &ok_response("planned lobby at 19:00"),
+            SOURCE_GROUP,
+            SOURCE_CHAT,
+            Some((DEDICATED_GROUP, DEDICATED_CHAT)),
+        );
+        assert_eq!(target, (DEDICATED_GROUP, DEDICATED_CHAT));
+    }
+
+    #[test]
+    fn plan_success_routes_to_source_when_dedicated_disabled() {
+        let target = command_response_target_with_plan_chat(
+            "plan",
+            &ok_response("planned lobby at 19:00"),
+            SOURCE_GROUP,
+            SOURCE_CHAT,
+            None,
+        );
+        assert_eq!(target, (SOURCE_GROUP, SOURCE_CHAT));
+    }
+
+    #[test]
+    fn poll_error_routes_to_source_chat_when_dedicated_enabled() {
+        let target = command_response_target_with_plan_chat(
+            "q",
+            &err_response("Usage: ..."),
+            SOURCE_GROUP,
+            SOURCE_CHAT,
+            Some((DEDICATED_GROUP, DEDICATED_CHAT)),
+        );
+        assert_eq!(target, (SOURCE_GROUP, SOURCE_CHAT));
     }
 }

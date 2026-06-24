@@ -29,7 +29,7 @@ struct PlanArgs<'a> {
 #[async_trait]
 impl CommandHandler for PlanCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
-        Ok(Self::execute_plan(ctx.args, Some(ctx.sender_id)).await)
+        Self::execute_plan(ctx.args, Some(ctx.sender_id)).await
     }
 
     fn metadata(&self) -> &CommandMetadata {
@@ -170,25 +170,23 @@ impl PlanCommand {
         None
     }
 
-    async fn execute_plan(args: &str, actor: Option<u64>) -> String {
-        let parsed_args = match Self::parse_args(args) {
-            Ok(parsed_args) => parsed_args,
-            Err(error) => return error,
-        };
+    async fn execute_plan(args: &str, actor: Option<u64>) -> Result<String, CommandError> {
+        let parsed_args =
+            Self::parse_args(args).map_err(CommandError::InvalidArguments)?;
 
         if parsed_args.clear {
             return Self::execute_clear(parsed_args, actor).await;
         }
 
-        let (hours, minutes) = match parse_time_string(parsed_args.time_str) {
-            Ok(parsed) => parsed,
-            Err(e) => return e,
-        };
+        let (hours, minutes) =
+            parse_time_string(parsed_args.time_str).map_err(CommandError::InvalidArguments)?;
 
-        let timestamp = match time_to_unix_timestamp(hours, minutes) {
-            Ok(ts) => ts,
-            Err(e) => return format!("Failed to convert time to Unix timestamp: {}", e),
-        };
+        let timestamp = time_to_unix_timestamp(hours, minutes).map_err(|e| {
+            CommandError::InvalidArguments(format!(
+                "Failed to convert time to Unix timestamp: {}",
+                e
+            ))
+        })?;
 
         println!(
             "Plan command: {}:{} → Unix timestamp: {}",
@@ -198,7 +196,7 @@ impl PlanCommand {
         let targeted = match parsed_args.server_id {
             Some(server_id) => match Self::selected_server_endpoint(server_id) {
                 Ok((ip, port)) => Some((server_id, ip, port)),
-                Err(error) => return error,
+                Err(error) => return Err(CommandError::InvalidArguments(error)),
             },
             None => None,
         };
@@ -211,7 +209,7 @@ impl PlanCommand {
             };
             if existing_timestamp == Some(timestamp) {
                 let time_str = unix_timestamp_to_cet_time(timestamp);
-                return format_already_planned(&time_str);
+                return Ok(format_already_planned(&time_str));
             }
         }
 
@@ -237,7 +235,7 @@ impl PlanCommand {
             None => (None, None, None, None),
         };
 
-        format_plan_response(PlanMessageContext {
+        Ok(format_plan_response(PlanMessageContext {
             time_str,
             actor_mention,
             server_id,
@@ -246,10 +244,10 @@ impl PlanCommand {
             server_name,
             requested_map: parsed_args.map,
             is_replan,
-        })
+        }))
     }
 
-    async fn execute_clear(parsed_args: PlanArgs<'_>, actor: Option<u64>) -> String {
+    async fn execute_clear(parsed_args: PlanArgs<'_>, actor: Option<u64>) -> Result<String, CommandError> {
         let actor_mention = plan_actor_mention(actor).await;
         let actor_mention = actor_mention.as_deref();
 
@@ -258,7 +256,7 @@ impl PlanCommand {
             if let Some(server_id) = parsed_args.server_id {
                 let (ip, _) = match Self::selected_server_endpoint(server_id) {
                     Ok(endpoint) => endpoint,
-                    Err(error) => return error,
+                    Err(error) => return Err(CommandError::InvalidArguments(error)),
                 };
                 let removed =
                     crate::steam_bot::plan_broadcast::clear_targeted_reservation_for_ip(&ip);
@@ -271,13 +269,13 @@ impl PlanCommand {
                             .is_some(),
                     }
                 };
-                return format_clear_response(actor_mention, result);
+                return Ok(format_clear_response(actor_mention, result));
             }
 
             crate::steam_bot::plan_broadcast::clear_reservation();
         }
 
-        format_clear_response(actor_mention, ClearResult::GlobalCleared)
+        Ok(format_clear_response(actor_mention, ClearResult::GlobalCleared))
     }
 
     fn is_replan(targeted: &Option<(u8, String, u16)>) -> bool {

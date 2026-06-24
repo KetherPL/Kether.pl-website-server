@@ -20,6 +20,13 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   Uses the SC_Sub_Poster library for Steam chat functionality.
     *   Supports sending formatted messages with player mentions and group notifications.
     *   Thread-safe implementation with global access for message sending from other parts of the application.
+    *   **Steam chat commands** (when `rest_call_for_sub` is enabled): mention the bot (or set `commands_without_mention = true`) and use `!command` syntax.
+        *   **`!plan` / `!p`** — schedule a lobby time (CET/CEST; formats `19:00`, `18.30`, or `16`). Optional server `1`/`2`, optional map via `m`/`map` (e.g. `!plan 19:00 m No Mercy`). `!plan clear [1|2]` clears reservations. Supports per-server targeting, replan detection, and optional user mentions.
+        *   **`!poll` / `!q`** — yes/no polls (thumb reactions) or multi-choice polls (`-o` options, up to 10, `:steamthis:` reactions on each choice). A single `-o` posts question + option without reactions.
+        *   **`!status` / `!s`** — query configured L4D2 server(s) for live info (`server_query` feature). Optional `1`/`2` and `full`/`f` for detailed player lists.
+        *   **`!help` / `!h`** — list available bot commands.
+    *   **Dedicated chat routing** for `!plan` and `!poll`: post successful responses to a separate chat room (`plan_chat_id` / `poll_chat_id`). Usage and validation errors always reply in the chat where the command was invoked.
+    *   **Plan WebSocket broadcast:** `GET /api/ws/plan` pushes `SET <timestamp>` / `CLEAR` messages to connected L4D2 servers or other clients when reservations change.
 *   **LiveServer Call for Subs:**
     *   The core functionality involves fetching and processing "call for sub" requests from a live L4D2 server (requires a [dedicated SourceMod plugin](https://github.com/Krevik/Kether.pl-L4D2-Server/blob/kether_2.0/addons/sourcemod/scripting/kether/l4d2_call_for_sub_rest.sp)).
     *   Automatically formats messages with player mentions and sends them to the configured Steam group chat.
@@ -62,6 +69,8 @@ This project is the backend server for the Kether.pl website, a homepage for the
         *   Steam Web API key
         *   Steam account credentials for bot functionality
         *   Steam group chat IDs for message delivery
+        *   Dedicated plan/poll chat IDs and behavior flags (routing, cleanup, user mentions)
+        *   Primary and secondary L4D2 server addresses (for `!status` and targeted `!plan`)
     *   **Hot reload:** When built with the `hot_reload` feature (included in the default `kether_meta` bundle), changes to `config.toml` are picked up automatically without restarting the process.
     *   JSON database files are automatically created in the executable directory:
         *   `cmds.json` - Server commands
@@ -71,6 +80,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   While the daemon runs with `--service`, press **`C`** to open an in-process command console.
     *   Supports restarting or stopping the daemon without leaving the `screen`/terminal session.
     *   In-process restart reloads the REST server and SteamBot from disk (useful after changing bot credentials or chat IDs).
+    *   **`chats` / `groups` / `G`** — list Steam chat groups and their chat rooms with IDs (uses the live SteamBot connection; requires `rest_call_for_sub`).
 *   **Command-Line Interface (CLI):**
     *   Allows querying L4D2 servers directly from the command line.
     *   Starts the RESTful server service.
@@ -114,7 +124,10 @@ This project is the backend server for the Kether.pl website, a homepage for the
         *   Set `steam.bot.password = "your_steam_password"`
     *   **Steam Chat:**
         *   Set `steam.chat.group_id` to your Steam group ID
-        *   Set `steam.chat.chat_id` to the specific chat channel ID
+        *   Set `steam.chat.chat_id` to the default chat channel ID (call-for-sub and general bot traffic)
+        *   Optional: `plan_chat_id` + `dedicated_plan_chat` to route `!plan` responses to a planning channel; `plan_chat_keep_clean` removes non-bot messages there; `plan_mention_user` appends the caller's mention
+        *   Optional: `poll_chat_id` + `dedicated_poll_chat` to route `!poll` posts to a polls channel; `poll_chat_remove_command_message` deletes the invoking `!poll` line; `poll_mention_user` appends the caller's mention to the question
+        *   Set `commands_without_mention = true` to allow `!plan`, `!poll`, etc. without `@`mentioning the bot
     *   **Note:** JSON database files (`cmds.json`, `binds.json`, `bind_sgs.json`) will be created automatically in the executable directory on first run.
 4.  **Set up FastDL (Optional):**
     If you want to use the FastDL server feature:
@@ -149,6 +162,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
         * `/api/LiveServerInfo` - Get live L4D2 server information
         * `/api/steam/*` - Steam user data and game ownership verification
         * `/api/callForSub` - Call for substitute player functionality
+        * `/api/ws/plan` - WebSocket stream for lobby reservation updates (`SET <timestamp>` / `CLEAR`)
     * **FastDL Server:** Access your game content at `http://localhost:3001/fastdl/...` (if FastDL feature is enabled).
     * **Directory Listings:** Browse folders at `http://localhost:3001/fastdl/your-folder/` to see automatic directory listings.
 
@@ -175,6 +189,19 @@ password = "your_steam_password"
 [steam.chat]
 group_id = 103582791429521408
 chat_id = 103582791429521409
+commands_without_mention = false
+
+# Dedicated planning chat (!plan / !p)
+plan_chat_id = 1234567
+dedicated_plan_chat = false
+plan_chat_keep_clean = false
+plan_mention_user = false
+
+# Dedicated poll chat (!poll / !q)
+poll_chat_id = 7654321
+dedicated_poll_chat = false
+poll_chat_remove_command_message = false
+poll_mention_user = false
 ```
 
 **Features:**
@@ -194,6 +221,8 @@ With the `hot_reload` feature enabled (default in `kether_meta`), saving `config
 * `steam.web_api_key`
 * `server.ip`, `server.port`, `server2.ip`, `server2.port`
 * `steam.chat.commands_without_mention`
+* `steam.chat.plan_chat_id`, `steam.chat.dedicated_plan_chat`, `steam.chat.plan_chat_keep_clean`, `steam.chat.plan_mention_user`
+* `steam.chat.poll_chat_id`, `steam.chat.dedicated_poll_chat`, `steam.chat.poll_chat_remove_command_message`, `steam.chat.poll_mention_user`
 
 **Require a REPL restart (`R` / `restart`) or full process restart:**
 
@@ -218,6 +247,7 @@ Press **`C`** (and press Enter) while the service is running to open the REPL. T
 | `quit` | `q`, `exit` | Close the REPL (daemon keeps running) |
 | `restart` | `R` | Restart REST + SteamBot **in the same process** — stays in the current terminal/`screen` session |
 | `stop` | `S` | Shut down the daemon cleanly and exit |
+| `chats` | `g`, `groups` | List Steam chat groups and chat rooms with IDs (requires `rest_call_for_sub`) |
 
 After closing the REPL, press **`C`** again to reopen it.
 
@@ -258,10 +288,11 @@ Files are automatically created on first run if they don't exist. Data is stored
 The project uses feature flags for modular builds. Default configuration includes all Kether.pl features:
 
 *   **`kether_meta`** (default) - Meta-package including all Kether.pl features
+*   **`rest_api`** - Base Rocket REST/WebSocket server (included via `sat` and most API features)
 *   **`rest_json_db`** - JSON database REST API (binds, commands, suggestions, voting)
 *   **`rest_steam`** - Steam Web API integration
-*   **`rest_call_for_sub`** - Call for substitute functionality
-*   **`server_query`** - L4D2 server querying
+*   **`rest_call_for_sub`** - Call for substitute functionality and SteamBot chat commands
+*   **`server_query`** - L4D2 server querying (`!status` and REST `LiveServerInfo`)
 *   **`fastdl`** - FastDL file server for Source/GoldSrc games
 *   **`hot_reload`** - Event-driven `config.toml` hot reload
 *   **`sat`** - Satanixon-specific features

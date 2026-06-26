@@ -138,6 +138,8 @@ impl SteamBotService {
     ) -> Result<(), String> {
         println!("Keeping instance alive...");
 
+        crate::steam_bot::mute::init().await;
+
         // Start message listener
         let listener_handle = crate::steam_bot::listener::start_message_listener(bot.clone());
 

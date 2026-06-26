@@ -25,6 +25,11 @@ This project is the backend server for the Kether.pl website, a homepage for the
         *   **`!poll` / `!q`** — yes/no polls (thumb reactions) or multi-choice polls (`-o` options, up to 10, `:steamthis:` reactions on each choice). A single `-o` posts question + option without reactions.
         *   **`!status` / `!s`** — query configured L4D2 server(s) for live info (`server_query` feature). Optional `1`/`2` and `full`/`f` for detailed player lists.
         *   **`!help` / `!h`** — list available bot commands.
+        *   **`!mute`** — admin-only: mute a user by mention; auto-deletes their messages globally until expiry. Duration: minutes (default 45), `h` for hours (e.g. `1:30` = 1h 30m; default 1), or `d` for days (default 1). Max duration configurable via `steam.bot.mute_max_minutes` (default 7 days).
+        *   **`!unmute`** — admin-only: remove a mute from a mentioned user.
+        *   **`!lsmute`** — admin-only: list muted users and remaining time.
+    *   **Mute persistence:** mutes up to 12 hours are kept in memory only; longer mutes are saved to `muted_users.json` beside the executable and restored on startup.
+    *   **SteamBot admins:** `steam.bot.admins_same_as_frontend` (default `true`) uses `frontend_admins`; set to `false` and configure `steam.bot.admins` for a separate admin list.
     *   **Dedicated chat routing** for `!plan` and `!poll`: post successful responses to a separate chat room (`plan_chat_id` / `poll_chat_id`). Usage and validation errors always reply in the chat where the command was invoked.
     *   **Plan WebSocket broadcast:** `GET /api/ws/plan` pushes `SET <timestamp>` / `CLEAR` messages to connected L4D2 servers or other clients when reservations change.
 *   **LiveServer Call for Subs:**
@@ -122,13 +127,15 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   **Steam Bot** (for !sub posting):
         *   Set `steam.bot.username = "your_steam_username"`
         *   Set `steam.bot.password = "your_steam_password"`
+        *   Optional: `steam.bot.admins_same_as_frontend = false` and `steam.bot.admins = [...]` for a separate SteamBot admin list (`!mute`, `!unmute`, `!lsmute`)
+        *   Optional: `steam.bot.mute_max_minutes` (default 10080 = 7 days) caps maximum mute duration
     *   **Steam Chat:**
         *   Set `steam.chat.group_id` to your Steam group ID
         *   Set `steam.chat.chat_id` to the default chat channel ID (call-for-sub and general bot traffic)
         *   Optional: `plan_chat_id` + `dedicated_plan_chat` to route `!plan` responses to a planning channel; `plan_chat_keep_clean` removes non-bot messages there; `plan_mention_user` appends the caller's mention
         *   Optional: `poll_chat_id` + `dedicated_poll_chat` to route `!poll` posts to a polls channel; `poll_chat_remove_command_message` deletes the invoking `!poll` line; `poll_mention_user` appends the caller's mention to the question
         *   Set `commands_without_mention = true` to allow `!plan`, `!poll`, etc. without `@`mentioning the bot
-    *   **Note:** JSON database files (`cmds.json`, `binds.json`, `bind_sgs.json`) will be created automatically in the executable directory on first run.
+    *   **Note:** JSON database files (`cmds.json`, `binds.json`, `bind_sgs.json`) and long-term mute state (`muted_users.json`) are created automatically in the executable directory when needed.
 4.  **Set up FastDL (Optional):**
     If you want to use the FastDL server feature:
     *   Create a `fastdl` directory in your project root: `mkdir fastdl`
@@ -183,6 +190,9 @@ web_api_key = "YOUR_STEAM_API_KEY"
 [steam.bot]
 username = "your_steam_username"
 password = "your_steam_password"
+admins = []
+admins_same_as_frontend = true
+mute_max_minutes = 10080
 
 # Steam Group Chat Configuration
 # IDs for the Steam group chat where !sub requests are posted
@@ -223,6 +233,7 @@ With the `hot_reload` feature enabled (default in `kether_meta`), saving `config
 * `steam.chat.commands_without_mention`
 * `steam.chat.plan_chat_id`, `steam.chat.dedicated_plan_chat`, `steam.chat.plan_chat_keep_clean`, `steam.chat.plan_mention_user`
 * `steam.chat.poll_chat_id`, `steam.chat.dedicated_poll_chat`, `steam.chat.poll_chat_remove_command_message`, `steam.chat.poll_mention_user`
+* `steam.bot.admins`, `steam.bot.admins_same_as_frontend`, `steam.bot.mute_max_minutes`
 
 **Require a REPL restart (`R` / `restart`) or full process restart:**
 

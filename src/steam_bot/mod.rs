@@ -39,6 +39,7 @@ mod connection;
 mod discovery;
 mod listener;
 mod messaging;
+mod mute;
 pub mod plan_broadcast;
 pub(crate) mod registry;
 mod service;

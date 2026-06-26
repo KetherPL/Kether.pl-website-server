@@ -55,6 +55,26 @@ struct BotConfig {
 	
 	#[serde(default)]
 	password: String,
+
+	/// Steam IDs allowed to use admin-only SteamBot commands (e.g. !mute)
+	#[serde(default)]
+	admins: Vec<i64>,
+
+	/// When true, SteamBot admin commands use frontend_admins instead of admins
+	#[serde(default = "default_true")]
+	admins_same_as_frontend: bool,
+
+	/// Maximum mute duration in minutes (default 7 days)
+	#[serde(default = "default_mute_max_minutes")]
+	mute_max_minutes: u64,
+}
+
+fn default_true() -> bool {
+	true
+}
+
+fn default_mute_max_minutes() -> u64 {
+	10080
 }
 
 /// Steam chat configuration
@@ -152,6 +172,9 @@ impl Default for BotConfig {
 		BotConfig {
 			username: String::new(),
 			password: String::new(),
+			admins: Vec::new(),
+			admins_same_as_frontend: true,
+			mute_max_minutes: default_mute_max_minutes(),
 		}
 	}
 }
@@ -218,6 +241,9 @@ pub struct Config {
 	pub poll_mention_user: bool,
 	pub steam_account: String,
 	pub steam_password: String,
+	pub steambot_admins: Vec<i64>,
+	pub steambot_admins_same_as_frontend: bool,
+	pub steambot_mute_max_minutes: u64,
 	pub server_ip: String,
 	pub server_port: u16,
 	pub server2_ip: String,
@@ -305,6 +331,9 @@ impl Config {
 			poll_mention_user: config_file.steam.chat.poll_mention_user,
 			steam_account: config_file.steam.bot.username,
 			steam_password: config_file.steam.bot.password,
+			steambot_admins: config_file.steam.bot.admins,
+			steambot_admins_same_as_frontend: config_file.steam.bot.admins_same_as_frontend,
+			steambot_mute_max_minutes: config_file.steam.bot.mute_max_minutes,
 			server_ip: config_file.server.ip,
 			server_port: config_file.server.port,
 			server2_ip: config_file.server2.ip,
@@ -363,6 +392,15 @@ impl Config {
 		if self.poll_mention_user != new.poll_mention_user {
 			change.live_applied.push("steam.chat.poll_mention_user");
 		}
+		if self.steambot_admins != new.steambot_admins {
+			change.live_applied.push("steam.bot.admins");
+		}
+		if self.steambot_admins_same_as_frontend != new.steambot_admins_same_as_frontend {
+			change.live_applied.push("steam.bot.admins_same_as_frontend");
+		}
+		if self.steambot_mute_max_minutes != new.steambot_mute_max_minutes {
+			change.live_applied.push("steam.bot.mute_max_minutes");
+		}
 		if self.steam_account != new.steam_account {
 			change.requires_restart.push("steam.bot.username");
 		}
@@ -412,6 +450,12 @@ web_api_key = ""
 [steam.bot]
 username = ""
 password = ""
+# Steam IDs allowed to use admin-only SteamBot commands (when admins_same_as_frontend = false)
+admins = []
+# When true, SteamBot admin commands use frontend_admins instead of admins
+admins_same_as_frontend = true
+# Maximum mute duration in minutes (default 7 days = 10080)
+mute_max_minutes = 10080
 
 # Steam Group Chat Configuration
 # IDs for the Steam group chat where !sub requests are posted
@@ -464,6 +508,20 @@ poll_mention_user = false
 	/// * `false` otherwise
 	pub fn is_admin(&self, steam_id: i64) -> bool {
 		self.frontend_admins.contains(&steam_id)
+	}
+
+	/// Returns the Steam ID list used for SteamBot admin commands.
+	pub fn steambot_admin_ids(&self) -> &[i64] {
+		if self.steambot_admins_same_as_frontend {
+			&self.frontend_admins
+		} else {
+			&self.steambot_admins
+		}
+	}
+
+	/// Whether a Steam ID may use admin-only SteamBot commands (e.g. !mute).
+	pub fn is_steambot_admin(&self, steam_id: u64) -> bool {
+		self.steambot_admin_ids().contains(&(steam_id as i64))
 	}
 
 	/// Get the L4D2 server IP address
@@ -660,6 +718,9 @@ web_api_key = "key_123"
 [steam.bot]
 username = "bot_user"
 password = "bot_pass"
+admins = [76561198000000003]
+admins_same_as_frontend = false
+mute_max_minutes = 4320
 
 [steam.chat]
 group_id = 1234
@@ -693,6 +754,9 @@ poll_mention_user = true
 		assert!(parsed.poll_mention_user);
 		assert_eq!(parsed.steam_account, "bot_user");
 		assert_eq!(parsed.steam_password, "bot_pass");
+		assert_eq!(parsed.steambot_admins, vec![76561198000000003]);
+		assert!(!parsed.steambot_admins_same_as_frontend);
+		assert_eq!(parsed.steambot_mute_max_minutes, 4320);
 		assert_eq!(parsed.server_ip, "127.0.0.1");
 		assert_eq!(parsed.server_port, 27015);
 		assert_eq!(parsed.server2_ip, "127.0.0.2");
@@ -718,6 +782,9 @@ poll_mention_user = true
 		assert!(!parsed.poll_chat_remove_command_message);
 		assert!(!parsed.poll_mention_user);
 		assert!(!parsed.steam_bot_commands_without_mention);
+		assert!(parsed.steambot_admins.is_empty());
+		assert!(parsed.steambot_admins_same_as_frontend);
+		assert_eq!(parsed.steambot_mute_max_minutes, 10080);
 	}
 
 	#[test]
@@ -799,5 +866,36 @@ poll_mention_user = true
 		assert!(change.unchanged);
 		assert!(change.live_applied.is_empty());
 		assert!(change.requires_restart.is_empty());
+	}
+
+	#[test]
+	fn is_steambot_admin_uses_frontend_when_same_as_frontend() {
+		let mut config = Config::from_toml_str(
+			r#"
+frontend_admins = [76561198000000001]
+[steam.bot]
+admins_same_as_frontend = true
+"#,
+		)
+		.expect("config");
+		assert!(config.is_steambot_admin(76561198000000001));
+		assert!(!config.is_steambot_admin(76561198000000099));
+		config.steambot_admins = vec![76561198000000099];
+		assert!(!config.is_steambot_admin(76561198000000099));
+	}
+
+	#[test]
+	fn is_steambot_admin_uses_steambot_admins_when_disabled() {
+		let config = Config::from_toml_str(
+			r#"
+frontend_admins = [76561198000000001]
+[steam.bot]
+admins = [76561198000000099]
+admins_same_as_frontend = false
+"#,
+		)
+		.expect("config");
+		assert!(!config.is_steambot_admin(76561198000000001));
+		assert!(config.is_steambot_admin(76561198000000099));
 	}
 }

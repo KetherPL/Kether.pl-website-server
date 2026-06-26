@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crate::steam_bot::registry;
 
 mod help;
+mod mute;
 mod plan;
 mod poll;
 mod test;
@@ -56,6 +57,8 @@ pub enum CommandError {
     ServerError(String),
     /// Configuration error
     ConfigError(String),
+    /// Caller is not authorized to use this command
+    Unauthorized(String),
     /// Command not yet implemented
     NotImplemented,
 }
@@ -66,6 +69,7 @@ impl std::fmt::Display for CommandError {
             CommandError::InvalidArguments(msg) => write!(f, "{}", msg),
             CommandError::ServerError(msg) => write!(f, "{}", msg),
             CommandError::ConfigError(msg) => write!(f, "{}", msg),
+            CommandError::Unauthorized(msg) => write!(f, "{}", msg),
             CommandError::NotImplemented => write!(f, "Command not implemented"),
         }
     }

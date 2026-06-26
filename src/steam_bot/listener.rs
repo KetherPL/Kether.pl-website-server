@@ -5,6 +5,7 @@ use crate::steam_bot::commands::command_response_target;
 use crate::steam_bot::commands::CommandRegistry;
 use crate::steam_bot::connection::ConnectionManager;
 use crate::steam_bot::messaging::MessageSender;
+use crate::steam_bot::mute;
 use crate::steam_bot::registry;
 use crate::steam_bot::utils::is_connection_error;
 use SC_Sub_Poster::EnhancedGroupChatMessage;
@@ -341,6 +342,7 @@ async fn listen_for_messages(
             send_command_response(&message, &response);
         }
         maybe_clean_dedicated_chat(&message, bot_steam_id);
+        maybe_delete_muted_message(&message, bot_steam_id);
     });
 
     let bot_clone = bot.clone();
@@ -417,6 +419,46 @@ fn maybe_clean_dedicated_chat(message: &EnhancedGroupChatMessage, bot_steam_id: 
         }
         Err(e) => {
             eprintln!("Failed to get runtime handle for dedicated chat cleanup: {}", e);
+        }
+    }
+}
+
+/// Deletes messages from globally muted users in any monitored chat room.
+fn maybe_delete_muted_message(message: &EnhancedGroupChatMessage, bot_steam_id: u64) {
+    let sender_id = u64::from(message.sender_steam_id);
+    if sender_id == bot_steam_id {
+        return;
+    }
+
+    if !mute::is_muted(sender_id) {
+        return;
+    }
+
+    if message.timestamp == 0 {
+        return;
+    }
+
+    let chat_group_id = message.chat_group_id;
+    let chat_id = message.chat_id;
+    let server_timestamp = message.timestamp;
+    let ordinal = message.ordinal;
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move {
+                if let Err(e) = MessageSender::delete_group_message_by_id_global(
+                    chat_group_id,
+                    chat_id,
+                    server_timestamp,
+                    ordinal,
+                )
+                .await
+                {
+                    eprintln!("Failed to delete muted user's message: {}", e);
+                }
+            });
+        }
+        Err(e) => {
+            eprintln!("Failed to get runtime handle for muted message cleanup: {}", e);
         }
     }
 }

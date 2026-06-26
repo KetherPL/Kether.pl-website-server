@@ -55,7 +55,20 @@ struct BotConfig {
 	
 	#[serde(default)]
 	password: String,
+}
 
+fn default_true() -> bool {
+	true
+}
+
+fn default_mute_max_minutes() -> u64 {
+	10080
+}
+
+/// Admin-only SteamBot command settings (e.g. !mute)
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct AdminConfig {
 	/// Steam IDs allowed to use admin-only SteamBot commands (e.g. !mute)
 	#[serde(default)]
 	admins: Vec<i64>,
@@ -69,12 +82,14 @@ struct BotConfig {
 	mute_max_minutes: u64,
 }
 
-fn default_true() -> bool {
-	true
-}
-
-fn default_mute_max_minutes() -> u64 {
-	10080
+impl Default for AdminConfig {
+	fn default() -> Self {
+		AdminConfig {
+			admins: Vec::new(),
+			admins_same_as_frontend: true,
+			mute_max_minutes: default_mute_max_minutes(),
+		}
+	}
 }
 
 /// Steam chat configuration
@@ -122,6 +137,10 @@ struct ChatConfig {
 	/// Whether to mention the user who executed !poll
 	#[serde(default)]
 	poll_mention_user: bool,
+
+	/// Admin-only SteamBot command settings
+	#[serde(default)]
+	admin: AdminConfig,
 }
 
 /// L4D2 server configuration
@@ -172,9 +191,6 @@ impl Default for BotConfig {
 		BotConfig {
 			username: String::new(),
 			password: String::new(),
-			admins: Vec::new(),
-			admins_same_as_frontend: true,
-			mute_max_minutes: default_mute_max_minutes(),
 		}
 	}
 }
@@ -193,6 +209,7 @@ impl Default for ChatConfig {
 			dedicated_poll_chat: false,
 			poll_chat_remove_command_message: false,
 			poll_mention_user: false,
+			admin: AdminConfig::default(),
 		}
 	}
 }
@@ -331,9 +348,9 @@ impl Config {
 			poll_mention_user: config_file.steam.chat.poll_mention_user,
 			steam_account: config_file.steam.bot.username,
 			steam_password: config_file.steam.bot.password,
-			steambot_admins: config_file.steam.bot.admins,
-			steambot_admins_same_as_frontend: config_file.steam.bot.admins_same_as_frontend,
-			steambot_mute_max_minutes: config_file.steam.bot.mute_max_minutes,
+			steambot_admins: config_file.steam.chat.admin.admins,
+			steambot_admins_same_as_frontend: config_file.steam.chat.admin.admins_same_as_frontend,
+			steambot_mute_max_minutes: config_file.steam.chat.admin.mute_max_minutes,
 			server_ip: config_file.server.ip,
 			server_port: config_file.server.port,
 			server2_ip: config_file.server2.ip,
@@ -393,13 +410,13 @@ impl Config {
 			change.live_applied.push("steam.chat.poll_mention_user");
 		}
 		if self.steambot_admins != new.steambot_admins {
-			change.live_applied.push("steam.bot.admins");
+			change.live_applied.push("steam.chat.admin.admins");
 		}
 		if self.steambot_admins_same_as_frontend != new.steambot_admins_same_as_frontend {
-			change.live_applied.push("steam.bot.admins_same_as_frontend");
+			change.live_applied.push("steam.chat.admin.admins_same_as_frontend");
 		}
 		if self.steambot_mute_max_minutes != new.steambot_mute_max_minutes {
-			change.live_applied.push("steam.bot.mute_max_minutes");
+			change.live_applied.push("steam.chat.admin.mute_max_minutes");
 		}
 		if self.steam_account != new.steam_account {
 			change.requires_restart.push("steam.bot.username");
@@ -450,12 +467,6 @@ web_api_key = ""
 [steam.bot]
 username = ""
 password = ""
-# Steam IDs allowed to use admin-only SteamBot commands (when admins_same_as_frontend = false)
-admins = []
-# When true, SteamBot admin commands use frontend_admins instead of admins
-admins_same_as_frontend = true
-# Maximum mute duration in minutes (default 7 days = 10080)
-mute_max_minutes = 10080
 
 # Steam Group Chat Configuration
 # IDs for the Steam group chat where !sub requests are posted
@@ -495,6 +506,15 @@ poll_chat_remove_command_message = false
 
 # If true, poll question messages mention the user who executed the command
 poll_mention_user = false
+
+# Admin-only SteamBot command settings (!mute / !unmute / !lsmute)
+[steam.chat.admin]
+# Steam IDs allowed to use admin-only commands (when admins_same_as_frontend = false)
+admins = []
+# When true, admin commands use frontend_admins instead of admins
+admins_same_as_frontend = true
+# Maximum mute duration in minutes (default 7 days = 10080)
+mute_max_minutes = 10080
 "#.to_string()
 	}
 	
@@ -718,9 +738,6 @@ web_api_key = "key_123"
 [steam.bot]
 username = "bot_user"
 password = "bot_pass"
-admins = [76561198000000003]
-admins_same_as_frontend = false
-mute_max_minutes = 4320
 
 [steam.chat]
 group_id = 1234
@@ -734,6 +751,11 @@ poll_chat_id = 8765
 dedicated_poll_chat = true
 poll_chat_remove_command_message = true
 poll_mention_user = true
+
+[steam.chat.admin]
+admins = [76561198000000003]
+admins_same_as_frontend = false
+mute_max_minutes = 4320
 "#
 	}
 
@@ -873,7 +895,7 @@ poll_mention_user = true
 		let mut config = Config::from_toml_str(
 			r#"
 frontend_admins = [76561198000000001]
-[steam.bot]
+[steam.chat.admin]
 admins_same_as_frontend = true
 "#,
 		)
@@ -889,7 +911,7 @@ admins_same_as_frontend = true
 		let config = Config::from_toml_str(
 			r#"
 frontend_admins = [76561198000000001]
-[steam.bot]
+[steam.chat.admin]
 admins = [76561198000000099]
 admins_same_as_frontend = false
 "#,

@@ -67,3 +67,12 @@ poll_chat_remove_command_message = false
 
 # If true, poll question messages mention the user who executed the command
 poll_mention_user = false
+
+# Admin-only SteamBot command settings (!mute / !unmute / !lsmute)
+[steam.chat.admin]
+# Steam IDs allowed to use admin-only commands (when admins_same_as_frontend = false)
+admins = []
+# When true, admin commands use frontend_admins instead of admins
+admins_same_as_frontend = true
+# Maximum mute duration in minutes (default 7 days = 10080)
+mute_max_minutes = 10080

@@ -249,6 +249,41 @@ impl CommandRegistry {
         result
     }
 
+    /// Looks up help data for a single command by name or alias.
+    ///
+    /// The leading `!` prefix is optional.
+    pub fn get_command_help(&self, name: &str) -> Option<(Vec<String>, String, Option<String>)> {
+        let needle = name.trim().trim_start_matches('!').to_lowercase();
+        if needle.is_empty() || !self.handlers.contains_key(&needle) {
+            return None;
+        }
+
+        for info in inventory::iter::<CommandInfo> {
+            let metadata = &info.metadata;
+            let matches_name = metadata.name.to_lowercase() == needle;
+            let matches_alias = metadata
+                .aliases
+                .iter()
+                .any(|alias| alias.to_lowercase() == needle);
+
+            if matches_name || matches_alias {
+                let mut aliases = vec![format!("!{}", metadata.name)];
+                for &alias in metadata.aliases {
+                    aliases.push(format!("!{}", alias));
+                }
+                aliases.sort();
+
+                return Some((
+                    aliases,
+                    metadata.description.to_string(),
+                    metadata.usage.map(str::to_string),
+                ));
+            }
+        }
+
+        None
+    }
+
     /// Gets a list of all registered command names (excluding test command)
     pub fn get_command_names(&self) -> Vec<String> {
         let mut commands: Vec<String> = Vec::new();
@@ -336,6 +371,26 @@ mod tests {
             .collect();
         assert!(names.contains(&"!help".to_string()) || names.contains(&"!h".to_string()));
         assert!(names.contains(&"!plan".to_string()) || names.contains(&"!p".to_string()));
+    }
+
+    #[test]
+    fn command_help_lookup_supports_name_alias_and_unknown() {
+        let registry = CommandRegistry::new();
+
+        let by_name = registry.get_command_help("poll");
+        assert!(by_name.is_some());
+        let (aliases, _description, usage) = by_name.expect("poll command should exist");
+        assert!(aliases.contains(&"!poll".to_string()));
+        assert!(usage.is_some());
+
+        let by_alias = registry.get_command_help("q");
+        assert!(by_alias.is_some());
+        let (alias_names, _description, usage) = by_alias.expect("poll alias should exist");
+        assert!(alias_names.contains(&"!poll".to_string()));
+        assert!(usage.is_some());
+
+        assert!(registry.get_command_help("!q").is_some());
+        assert!(registry.get_command_help("nope").is_none());
     }
 
     #[test]

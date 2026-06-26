@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use super::{CommandError, CommandHandler, CommandInfo, CommandMetadata, CommandRegistry, CommandContext};
+use super::{
+    CommandContext, CommandError, CommandHandler, CommandInfo, CommandMetadata, CommandRegistry,
+};
 use async_trait::async_trait;
 
 /// Help command handler
@@ -27,12 +29,32 @@ impl HelpCommand {
             response
         }
     }
+
+    /// Returns help for a single command name or alias.
+    fn execute_command_help(command: &str) -> String {
+        let registry = CommandRegistry::new();
+        match registry.get_command_help(command) {
+            Some((aliases, description, usage)) => {
+                let mut response = format!("{}\n  {}", aliases.join(", "), description);
+                if let Some(usage) = usage {
+                    response.push_str(&format!("\n  Usage: {}", usage));
+                }
+                response
+            }
+            None => format!("Unknown command: {}. Use !help to list commands.", command),
+        }
+    }
 }
 
 #[async_trait]
 impl CommandHandler for HelpCommand {
-    async fn execute(&self, _ctx: &CommandContext<'_>) -> Result<String, CommandError> {
-        Ok(Self::execute_help())
+    async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
+        let command = ctx.args.split_whitespace().next().unwrap_or("");
+        if command.is_empty() {
+            Ok(Self::execute_help())
+        } else {
+            Ok(Self::execute_command_help(command))
+        }
     }
 
     fn metadata(&self) -> &CommandMetadata {
@@ -40,7 +62,7 @@ impl CommandHandler for HelpCommand {
             name: "help",
             aliases: &["h"],
             description: "Lists all available commands.",
-            usage: Some("!help | !h"),
+            usage: Some("!help [command] | !h [command]"),
         };
         &METADATA
     }
@@ -51,7 +73,7 @@ inventory::submit! {
         "help",
         &["h"],
         "Lists all available commands.",
-        Some("!help | !h"),
+        Some("!help [command] | !h [command]"),
         || Box::new(HelpCommand)
     )
 }

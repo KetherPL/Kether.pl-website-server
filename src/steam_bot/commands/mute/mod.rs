@@ -15,6 +15,15 @@ const MUTE_USAGE: &str =
 const UNMUTE_USAGE: &str = "!unmute <user mention>";
 const LSMUTE_USAGE: &str = "!lsmute";
 
+fn with_usage(error: CommandError, usage: &str) -> CommandError {
+    match error {
+        CommandError::InvalidArguments(message) => {
+            CommandError::InvalidArguments(format!("{}\nUsage: {}", message, usage))
+        }
+        other => other,
+    }
+}
+
 fn require_admin(sender_id: u64) -> Result<(), CommandError> {
     if registry::config().is_steambot_admin(sender_id) {
         Ok(())
@@ -122,11 +131,13 @@ struct MuteCommand;
 impl CommandHandler for MuteCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
         require_admin(ctx.sender_id)?;
-        let target_id = resolve_target_steam_id(ctx).await?;
+        let target_id = resolve_target_steam_id(ctx)
+            .await
+            .map_err(|e| with_usage(e, MUTE_USAGE))?;
         let token_strings = duration_tokens(ctx.args);
         let tokens: Vec<&str> = token_strings.iter().map(String::as_str).collect();
         let mut duration_minutes = parse_mute_duration(&tokens)
-            .map_err(CommandError::InvalidArguments)?;
+            .map_err(|e| with_usage(CommandError::InvalidArguments(e), MUTE_USAGE))?;
 
         let config = registry::config();
         let max_minutes = config.steambot_mute_max_minutes;
@@ -165,7 +176,9 @@ struct UnmuteCommand;
 impl CommandHandler for UnmuteCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
         require_admin(ctx.sender_id)?;
-        let target_id = resolve_target_steam_id(ctx).await?;
+        let target_id = resolve_target_steam_id(ctx)
+            .await
+            .map_err(|e| with_usage(e, UNMUTE_USAGE))?;
         let display_name = resolve_display_name(target_id).await;
         if mute::remove_mute(target_id).await {
             Ok(format!("Unmuted {}.", display_name))

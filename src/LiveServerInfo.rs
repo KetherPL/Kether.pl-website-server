@@ -9,6 +9,14 @@ use std::net::IpAddr;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use crate::steam_bot::registry::ConfigHandle;
+use crate::utils::rate_limit::SlidingWindowLimiter;
+
+static OPEN_LIVE_SERVER_RATE_LIMITER: OnceCell<SlidingWindowLimiter<IpAddr>> = OnceCell::new();
+
+fn open_live_server_rate_limiter() -> &'static SlidingWindowLimiter<IpAddr> {
+	OPEN_LIVE_SERVER_RATE_LIMITER.get_or_init(SlidingWindowLimiter::new)
+}
+
 fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<crate::config::Config> {
 	match handle.read() {
 		Ok(guard) => guard.clone(),
@@ -169,9 +177,34 @@ pub async fn query_server_name(ip: &str, port: u16) -> Result<String, Status> {
 }
 
 #[get("/<ip>/<port>")]
-pub async fn live_server_info(ip: String, port: u16) -> Result<Json<L4D2ServerInfo>, Status> {
-	query_server_with_retry(&ip, port).await
-		.map(Json)
+pub async fn live_server_info(
+	ip: String,
+	port: u16,
+	config: &State<ConfigHandle>,
+	client_ip: crate::utils::client_ip::ClientIp,
+) -> Result<Json<L4D2ServerInfo>, Status> {
+	let config = config_snapshot(config);
+
+	if !config.live_server_open_enabled {
+		return Err(Status::NotFound);
+	}
+
+	let parsed_ip: IpAddr = ip.parse().map_err(|_| Status::BadRequest)?;
+
+	if config.live_server_block_private_ips && crate::utils::ip_filter::is_blocked_query_target(parsed_ip) {
+		return Err(Status::Forbidden);
+	}
+
+	let client_ip = client_ip.0;
+	if !open_live_server_rate_limiter().check_and_record(
+		client_ip,
+		config.live_server_rate_limit_per_ip,
+		config.live_server_rate_limit_burst,
+	) {
+		return Err(Status::TooManyRequests);
+	}
+
+	query_server_with_retry(&ip, port).await.map(Json)
 }
 
 #[get("/kether")]

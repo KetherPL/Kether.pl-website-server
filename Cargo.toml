@@ -56,7 +56,7 @@ default = ["kether_meta", "sat"] # Features starter pack
                 # /↑\ Don't forget pass it through the http. Source/GoldSrc games don't support https for FastDL.
         hot_reload = ["cfg", "dep:notify-debouncer-full"] # Event-driven config.toml hot reload
         rest_json_db = ["rest_api", "auth"] # REST API – JSON database for website (binds, bind suggestions, commands)
-        rest_steam = ["cfg", "rest_api", "dep:steam-rs"] # REST API – Steam part for website (fetch userdata, check if owns appid=550 (L4D2))
+        rest_steam = ["cfg", "rest_api", "auth", "dep:steam-rs"] # REST API – Steam part for website (fetch userdata, check if owns appid=550 (L4D2))
         server_query = ["cfg", "dep:gamedig", "dep:futures-util"] # Query L4D2 servers (either through CLI or REST API)
         rest_call_for_sub = ["cfg", "rest_api", "dep:SC_Sub_Poster"] # REST API – Uses NodeJS to post `!sub` requests on the Steam Group Chat
             cfg = ["dep:colored", "dep:toml"] # config.toml – Steam Web API key, bot credentials, chat IDs

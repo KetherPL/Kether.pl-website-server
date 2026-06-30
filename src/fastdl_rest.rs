@@ -1,9 +1,82 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use rocket::{catch, catchers, http::{ContentType, Header}, response::{self, Responder, Response}, Catcher, Request, fairing::{Fairing, Info, Kind}};
+use rocket::{catch, catchers, http::{ContentType, Header, Status}, response::{self, Responder, Response}, Catcher, Request, fairing::{Fairing, Info, Kind}};
 use smol::{fs, stream::StreamExt};
-use std::path::{Path, PathBuf};
+use once_cell::sync::OnceCell;
+use std::path::{Component, Path, PathBuf};
 use rocket::serde::Serialize;
+
+static CANONICAL_FASTDL_ROOT: OnceCell<PathBuf> = OnceCell::new();
+
+fn fastdl_root_rel() -> &'static Path {
+	Path::new("./fastdl")
+}
+
+fn canonical_fastdl_root() -> Result<&'static Path, Status> {
+	CANONICAL_FASTDL_ROOT
+		.get_or_try_init(|| {
+			std::fs::canonicalize(fastdl_root_rel()).map_err(|_| Status::InternalServerError)
+		})
+		.map(|p| p.as_path())
+}
+
+/// Resolve a request-relative path under `root`, rejecting traversal attempts.
+fn resolve_fastdl_path_under(root: &Path, rel: &Path) -> Result<PathBuf, Status> {
+	if rel.is_absolute() {
+		return Err(Status::Forbidden);
+	}
+
+	for component in rel.components() {
+		if matches!(component, Component::ParentDir) {
+			return Err(Status::Forbidden);
+		}
+	}
+
+	let joined = root.join(rel);
+
+	if joined.exists() {
+		let canonical = std::fs::canonicalize(&joined).map_err(|_| Status::NotFound)?;
+		if !canonical.starts_with(root) {
+			return Err(Status::Forbidden);
+		}
+		return Ok(canonical);
+	}
+
+	let mut current = joined.as_path();
+	while !current.exists() {
+		match current.parent() {
+			Some(parent) if parent.starts_with(root) => current = parent,
+			Some(parent) if parent == root => current = parent,
+			_ => return Err(Status::NotFound),
+		}
+	}
+
+	let canonical_ancestor = std::fs::canonicalize(current).map_err(|_| Status::NotFound)?;
+	if !canonical_ancestor.starts_with(root) {
+		return Err(Status::Forbidden);
+	}
+
+	Ok(joined)
+}
+
+/// Resolve a request-relative path under the FastDL root, rejecting traversal attempts.
+fn resolve_fastdl_path(rel: &Path) -> Result<PathBuf, Status> {
+	resolve_fastdl_path_under(canonical_fastdl_root()?, rel)
+}
+
+enum FastdlCatchResponse {
+	Html(HtmlResponse),
+	Status(Status),
+}
+
+impl<'r> Responder<'r, 'static> for FastdlCatchResponse {
+	fn respond_to(self, req: &'r Request<'_>) -> response::Result<'static> {
+		match self {
+			Self::Html(html) => html.respond_to(req),
+			Self::Status(status) => status.respond_to(req),
+		}
+	}
+}
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -202,35 +275,29 @@ fn render_directory_listing_html(listing: &DirectoryListing) -> String {
 }
 
 /// Implementation of directory listing logic
-async fn directory_listing_impl(path: PathBuf) -> Result<HtmlResponse, rocket::http::Status> {
-    let fastdl_root = Path::new("./fastdl");
-    let full_path = fastdl_root.join(&path);
-    
-    // Security check: ensure the path is within fastdl directory
-    if !full_path.starts_with(fastdl_root) {
-        return Err(rocket::http::Status::Forbidden);
-    }
+async fn directory_listing_impl(path: PathBuf) -> Result<HtmlResponse, Status> {
+    let full_path = resolve_fastdl_path(&path)?;
     
     // Check if path exists and get metadata
     let metadata = match fs::metadata(&full_path).await {
         Ok(meta) => meta,
-        Err(_) => return Err(rocket::http::Status::NotFound),
+        Err(_) => return Err(Status::NotFound),
     };
     
     // If it's a file, let FileServer handle it
     if metadata.is_file() {
-        return Err(rocket::http::Status::NotFound);
+        return Err(Status::NotFound);
     }
     
     // If it's not a directory, return 404
     if !metadata.is_dir() {
-        return Err(rocket::http::Status::NotFound);
+        return Err(Status::NotFound);
     }
     
     // Check if index.html exists (let FileServer handle it)
     let index_path = full_path.join("index.html");
     if fs::metadata(&index_path).await.is_ok() {
-        return Err(rocket::http::Status::NotFound); // Let FileServer handle this
+        return Err(Status::NotFound); // Let FileServer handle this
     }
     
     // Read directory contents
@@ -282,7 +349,7 @@ async fn directory_listing_impl(path: PathBuf) -> Result<HtmlResponse, rocket::h
 
 /// Custom 404 catcher for FastDL that provides directory listings
 #[catch(404)]
-async fn fastdl_not_found(req: &Request<'_>) -> Option<HtmlResponse> {
+async fn fastdl_not_found(req: &Request<'_>) -> Option<FastdlCatchResponse> {
     let uri_path = req.uri().path().as_str();
     
     // Only handle requests that start with /fastdl/
@@ -293,15 +360,14 @@ async fn fastdl_not_found(req: &Request<'_>) -> Option<HtmlResponse> {
     // Extract the path after /fastdl/
     let fastdl_path = &uri_path[8..]; // Remove "/fastdl/" prefix
     let path = PathBuf::from(fastdl_path);
-    
-    // Check if this could be a directory request
-    let fastdl_root = Path::new("./fastdl");
-    let full_path = fastdl_root.join(&path);
-    
-    // Security check
-    if !full_path.starts_with(fastdl_root) {
-        return None;
-    }
+
+    let full_path = match resolve_fastdl_path(&path) {
+        Ok(p) => p,
+        Err(e) if e.code == Status::Forbidden.code => {
+            return Some(FastdlCatchResponse::Status(Status::Forbidden));
+        }
+        Err(_) => return None,
+    };
     
     // If it's a directory without index.html, serve directory listing
     if let Ok(metadata) = fs::metadata(&full_path).await
@@ -310,7 +376,10 @@ async fn fastdl_not_found(req: &Request<'_>) -> Option<HtmlResponse> {
         let index_path = full_path.join("index.html");
         if fs::metadata(&index_path).await.is_err() {
             match directory_listing_impl(path).await {
-                Ok(response) => return Some(response),
+                Ok(response) => return Some(FastdlCatchResponse::Html(response)),
+                Err(e) if e.code == Status::Forbidden.code => {
+                    return Some(FastdlCatchResponse::Status(Status::Forbidden));
+                }
                 Err(_) => return None,
             }
         }
@@ -348,4 +417,54 @@ impl Fairing for FastDLCacheHeaders {
 /// Mount FastDL catchers
 pub fn mount_fastdl_catchers() -> Vec<Catcher> {
     catchers![fastdl_not_found]
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use std::fs;
+
+	#[test]
+	fn resolve_valid_nested_path() {
+		let temp = tempfile::TempDir::new().expect("tempdir");
+		let root = temp.path().join("fastdl");
+		fs::create_dir_all(root.join("foo/bar")).expect("create dirs");
+		fs::write(root.join("foo/bar/file.txt"), b"ok").expect("write file");
+		let canonical_root = root.canonicalize().expect("canonicalize");
+
+		let rel = Path::new("foo/bar");
+		let resolved = resolve_fastdl_path_under(&canonical_root, rel).expect("valid path");
+		assert!(resolved.starts_with(&canonical_root));
+		assert!(resolved.ends_with("foo/bar"));
+	}
+
+	#[test]
+	fn reject_parent_dir_traversal() {
+		let temp = tempfile::TempDir::new().expect("tempdir");
+		let root = temp.path().join("fastdl");
+		fs::create_dir_all(&root).expect("create root");
+		let canonical_root = root.canonicalize().expect("canonicalize");
+
+		assert_eq!(
+			resolve_fastdl_path_under(&canonical_root, Path::new("../etc/passwd")),
+			Err(Status::Forbidden)
+		);
+		assert_eq!(
+			resolve_fastdl_path_under(&canonical_root, Path::new("foo/../../outside")),
+			Err(Status::Forbidden)
+		);
+	}
+
+	#[test]
+	fn reject_absolute_path() {
+		let temp = tempfile::TempDir::new().expect("tempdir");
+		let root = temp.path().join("fastdl");
+		fs::create_dir_all(&root).expect("create root");
+		let canonical_root = root.canonicalize().expect("canonicalize");
+
+		assert_eq!(
+			resolve_fastdl_path_under(&canonical_root, Path::new("/etc/passwd")),
+			Err(Status::Forbidden)
+		);
+	}
 }

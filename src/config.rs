@@ -30,6 +30,12 @@ struct ConfigFile {
 
 	#[serde(default)]
 	auth: AuthConfig,
+
+	#[serde(default)]
+	live_server_info: LiveServerInfoConfig,
+
+	#[serde(default)]
+	steam_rest: SteamRestConfig,
 }
 
 /// Steam-related configuration
@@ -181,6 +187,78 @@ fn default_frontend_url() -> String {
 	"https://kether.pl".to_string()
 }
 
+fn default_live_server_rate_limit() -> u32 {
+	20
+}
+
+fn default_live_server_burst() -> u32 {
+	5
+}
+
+fn default_steam_rest_user_rate() -> u32 {
+	10
+}
+
+fn default_steam_rest_ip_rate() -> u32 {
+	30
+}
+
+fn default_steam_rest_cache_ttl() -> u64 {
+	300
+}
+
+/// Settings for the open LiveServerInfo query endpoint
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct LiveServerInfoConfig {
+	#[serde(default = "default_true")]
+	open_endpoint_enabled: bool,
+
+	#[serde(default = "default_true")]
+	block_private_ips: bool,
+
+	#[serde(default = "default_live_server_rate_limit")]
+	rate_limit_per_ip_per_minute: u32,
+
+	#[serde(default = "default_live_server_burst")]
+	rate_limit_burst: u32,
+}
+
+impl Default for LiveServerInfoConfig {
+	fn default() -> Self {
+		LiveServerInfoConfig {
+			open_endpoint_enabled: true,
+			block_private_ips: true,
+			rate_limit_per_ip_per_minute: default_live_server_rate_limit(),
+			rate_limit_burst: default_live_server_burst(),
+		}
+	}
+}
+
+/// Rate limits and caching for authenticated Steam REST proxy endpoints
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct SteamRestConfig {
+	#[serde(default = "default_steam_rest_user_rate")]
+	requests_per_minute_per_user: u32,
+
+	#[serde(default = "default_steam_rest_ip_rate")]
+	requests_per_minute_per_ip: u32,
+
+	#[serde(default = "default_steam_rest_cache_ttl")]
+	response_cache_ttl_secs: u64,
+}
+
+impl Default for SteamRestConfig {
+	fn default() -> Self {
+		SteamRestConfig {
+			requests_per_minute_per_user: default_steam_rest_user_rate(),
+			requests_per_minute_per_ip: default_steam_rest_ip_rate(),
+			response_cache_ttl_secs: default_steam_rest_cache_ttl(),
+		}
+	}
+}
+
 /// Session / Steam OpenID authentication settings
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -200,6 +278,10 @@ struct AuthConfig {
 	/// Session lifetime in hours
 	#[serde(default = "default_session_ttl_hours")]
 	session_ttl_hours: u64,
+
+	/// Allowed Origin/Referer values for CSRF protection on cookie-authenticated mutations
+	#[serde(default)]
+	csrf_allowed_origins: Vec<String>,
 }
 
 impl Default for AuthConfig {
@@ -209,8 +291,26 @@ impl Default for AuthConfig {
 			frontend_url: default_frontend_url(),
 			cookie_domain: String::new(),
 			session_ttl_hours: default_session_ttl_hours(),
+			csrf_allowed_origins: Vec::new(),
 		}
 	}
+}
+
+fn effective_csrf_origins(frontend_url: &str, configured: &[String]) -> Vec<String> {
+	let mut origins: Vec<String> = if configured.is_empty() {
+		vec![
+			frontend_url.to_string(),
+			"http://localhost:3000".to_string(),
+			"http://localhost:80".to_string(),
+		]
+	} else {
+		configured.to_vec()
+	};
+
+	origins.retain(|origin| !origin.trim().is_empty());
+	origins.sort();
+	origins.dedup();
+	origins
 }
 
 impl Default for ConfigFile {
@@ -221,6 +321,8 @@ impl Default for ConfigFile {
 			server: ServerConfig::default(),
 			server2: ServerConfig::default(),
 			auth: AuthConfig::default(),
+			live_server_info: LiveServerInfoConfig::default(),
+			steam_rest: SteamRestConfig::default(),
 		}
 	}
 }
@@ -320,6 +422,14 @@ pub struct Config {
 	pub auth_frontend_url: String,
 	pub auth_cookie_domain: String,
 	pub auth_session_ttl_hours: u64,
+	pub auth_csrf_allowed_origins: Vec<String>,
+	pub live_server_open_enabled: bool,
+	pub live_server_block_private_ips: bool,
+	pub live_server_rate_limit_per_ip: u32,
+	pub live_server_rate_limit_burst: u32,
+	pub steam_rest_user_rate_limit: u32,
+	pub steam_rest_ip_rate_limit: u32,
+	pub steam_rest_cache_ttl_secs: u64,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -416,9 +526,20 @@ impl Config {
 			server2_port: config_file.server2.port,
 			steam_bot_commands_without_mention: config_file.steam.chat.commands_without_mention,
 			session_secret: config_file.auth.session_secret,
-			auth_frontend_url: config_file.auth.frontend_url,
+			auth_frontend_url: config_file.auth.frontend_url.clone(),
 			auth_cookie_domain: config_file.auth.cookie_domain,
 			auth_session_ttl_hours: config_file.auth.session_ttl_hours,
+			auth_csrf_allowed_origins: effective_csrf_origins(
+				&config_file.auth.frontend_url,
+				&config_file.auth.csrf_allowed_origins,
+			),
+			live_server_open_enabled: config_file.live_server_info.open_endpoint_enabled,
+			live_server_block_private_ips: config_file.live_server_info.block_private_ips,
+			live_server_rate_limit_per_ip: config_file.live_server_info.rate_limit_per_ip_per_minute,
+			live_server_rate_limit_burst: config_file.live_server_info.rate_limit_burst,
+			steam_rest_user_rate_limit: config_file.steam_rest.requests_per_minute_per_user,
+			steam_rest_ip_rate_limit: config_file.steam_rest.requests_per_minute_per_ip,
+			steam_rest_cache_ttl_secs: config_file.steam_rest.response_cache_ttl_secs,
 		}
 	}
 
@@ -532,6 +653,30 @@ impl Config {
 		if self.auth_session_ttl_hours != new.auth_session_ttl_hours {
 			change.live_applied.push("auth.session_ttl_hours");
 		}
+		if self.auth_csrf_allowed_origins != new.auth_csrf_allowed_origins {
+			change.live_applied.push("auth.csrf_allowed_origins");
+		}
+		if self.live_server_open_enabled != new.live_server_open_enabled {
+			change.live_applied.push("live_server_info.open_endpoint_enabled");
+		}
+		if self.live_server_block_private_ips != new.live_server_block_private_ips {
+			change.live_applied.push("live_server_info.block_private_ips");
+		}
+		if self.live_server_rate_limit_per_ip != new.live_server_rate_limit_per_ip {
+			change.live_applied.push("live_server_info.rate_limit_per_ip_per_minute");
+		}
+		if self.live_server_rate_limit_burst != new.live_server_rate_limit_burst {
+			change.live_applied.push("live_server_info.rate_limit_burst");
+		}
+		if self.steam_rest_user_rate_limit != new.steam_rest_user_rate_limit {
+			change.live_applied.push("steam_rest.requests_per_minute_per_user");
+		}
+		if self.steam_rest_ip_rate_limit != new.steam_rest_ip_rate_limit {
+			change.live_applied.push("steam_rest.requests_per_minute_per_ip");
+		}
+		if self.steam_rest_cache_ttl_secs != new.steam_rest_cache_ttl_secs {
+			change.live_applied.push("steam_rest.response_cache_ttl_secs");
+		}
 
 		change.unchanged = change.live_applied.is_empty() && change.requires_restart.is_empty();
 		change
@@ -630,6 +775,18 @@ frontend_url = "https://kether.pl"
 cookie_domain = ""
 # Session lifetime in hours (default: 7 days)
 session_ttl_hours = 168
+
+[live_server_info]
+open_endpoint_enabled = true
+block_private_ips = true
+rate_limit_per_ip_per_minute = 20
+rate_limit_burst = 5
+
+# Authenticated Steam REST proxy rate limits and caching
+[steam_rest]
+requests_per_minute_per_user = 10
+requests_per_minute_per_ip = 30
+response_cache_ttl_secs = 300
 "#.to_string()
 	}
 	
@@ -657,6 +814,11 @@ session_ttl_hours = 168
 		} else {
 			Some(self.auth_cookie_domain.trim())
 		}
+	}
+
+	/// Allowed Origin/Referer values for CSRF validation
+	pub fn auth_csrf_allowed_origins(&self) -> &[String] {
+		&self.auth_csrf_allowed_origins
 	}
 
 	/// Returns the Steam ID list used for SteamBot admin commands.

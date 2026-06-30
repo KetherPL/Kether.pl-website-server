@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+mod csrf;
 mod steam_openid;
 
 use crate::config::Config;
 use crate::steam_bot::registry::ConfigHandle;
+use csrf::CsrfGuard;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use rocket::http::{Cookie, SameSite, Status};
 use rocket::request::{FromRequest, Outcome, Request};
@@ -114,7 +116,12 @@ impl<'r> FromRequest<'r> for AuthUser {
 			Outcome::Forward(f) => return Outcome::Forward(f),
 		};
 
+		if let Outcome::Error(e) = CsrfGuard::from_request(request).await {
+			return Outcome::Error(e);
+		}
+
 		let config = config_snapshot(config_handle);
+
 		let token = request
 			.cookies()
 			.get(SESSION_COOKIE_NAME)

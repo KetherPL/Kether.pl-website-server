@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
@@ -8,13 +9,37 @@ use once_cell::sync::OnceCell;
 use rocket::{http::Status, options, post, routes, serde::json::Json, State};
 use steam_rs::{steam_user::get_player_summaries::Player, steam_id::SteamId, Steam};
 use rocket::serde::{Serialize, Deserialize};
+use crate::auth::AuthUser;
 use crate::steam_bot::registry::ConfigHandle;
+use crate::utils::client_ip::ClientIp;
+use crate::utils::rate_limit::SlidingWindowLimiter;
 
 static PERSONA_NAME_CACHE: OnceCell<RwLock<HashMap<u64, (String, Instant)>>> = OnceCell::new();
+static USER_DATA_CACHE: OnceCell<RwLock<HashMap<u64, (Instant, SteamUserDetails)>>> = OnceCell::new();
+static GAMES_CACHE: OnceCell<RwLock<HashMap<u64, (Instant, GamesInfo)>>> = OnceCell::new();
+static STEAM_USER_RATE_LIMITER: OnceCell<SlidingWindowLimiter<u64>> = OnceCell::new();
+static STEAM_IP_RATE_LIMITER: OnceCell<SlidingWindowLimiter<IpAddr>> = OnceCell::new();
+
 const PERSONA_CACHE_TTL: Duration = Duration::from_secs(1800); // 30 minutes
 
 fn persona_name_cache() -> &'static RwLock<HashMap<u64, (String, Instant)>> {
 	PERSONA_NAME_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn user_data_cache() -> &'static RwLock<HashMap<u64, (Instant, SteamUserDetails)>> {
+	USER_DATA_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn games_cache() -> &'static RwLock<HashMap<u64, (Instant, GamesInfo)>> {
+	GAMES_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn steam_user_rate_limiter() -> &'static SlidingWindowLimiter<u64> {
+	STEAM_USER_RATE_LIMITER.get_or_init(SlidingWindowLimiter::new)
+}
+
+fn steam_ip_rate_limiter() -> &'static SlidingWindowLimiter<IpAddr> {
+	STEAM_IP_RATE_LIMITER.get_or_init(SlidingWindowLimiter::new)
 }
 
 /// Resolve Steam IDs to persona names, using a short-lived in-memory cache.
@@ -86,7 +111,48 @@ fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<crate::config
 	}
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+fn parse_and_verify_steam_id(steam_id: &str, auth: &AuthUser) -> Result<u64, Status> {
+	let steam_id_u64: u64 = steam_id.parse().map_err(|e| {
+		eprintln!("Invalid Steam ID format: {}", e);
+		Status::BadRequest
+	})?;
+
+	if auth.0 != steam_id_u64 as i64 {
+		return Err(Status::Forbidden);
+	}
+
+	Ok(steam_id_u64)
+}
+
+fn check_steam_rest_rate_limits(
+	config: &crate::config::Config,
+	steam_id: u64,
+	client_ip: IpAddr,
+) -> Result<(), Status> {
+	if !steam_user_rate_limiter().check_and_record(
+		steam_id,
+		config.steam_rest_user_rate_limit,
+		0,
+	) {
+		return Err(Status::TooManyRequests);
+	}
+
+	if !steam_ip_rate_limiter().check_and_record(
+		client_ip,
+		config.steam_rest_ip_rate_limit,
+		0,
+	) {
+		return Err(Status::TooManyRequests);
+	}
+
+	Ok(())
+}
+
+fn response_cache_ttl(config: &crate::config::Config) -> Duration {
+	Duration::from_secs(config.steam_rest_cache_ttl_secs.max(1))
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
 pub struct SteamUserDetails {
 	pub personaname: String,
@@ -114,7 +180,7 @@ impl From<Player> for SteamUserDetails {
 	}
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
 pub struct GamesInfo {
 	pub owns_left4dead2: bool,
@@ -123,28 +189,36 @@ pub struct GamesInfo {
 // --- User Data ---
 
 #[post("/userData", data = "<steam_id>")]
-pub async fn get_user_data(steam_id: String, config: &State<ConfigHandle>) -> Result<Json<SteamUserDetails>, Status> {
+pub async fn get_user_data(
+	steam_id: String,
+	auth: AuthUser,
+	config: &State<ConfigHandle>,
+	client_ip: ClientIp,
+) -> Result<Json<SteamUserDetails>, Status> {
 	let config = config_snapshot(config);
+	let steam_id_u64 = parse_and_verify_steam_id(&steam_id, &auth)?;
+	check_steam_rest_rate_limits(&config, steam_id_u64, client_ip.0)?;
+
+	let cache_ttl = response_cache_ttl(&config);
+	let now = Instant::now();
+	if let Ok(cache) = user_data_cache().read()
+		&& let Some((cached_at, details)) = cache.get(&steam_id_u64)
+		&& now.duration_since(*cached_at) < cache_ttl
+	{
+		return Ok(Json(details.clone()));
+	}
+
 	let steam = Steam::new(&config.steam_web_api_key);
-
-	// Parse the steam_id string to u64
-	let steam_id_u64: u64 = match steam_id.parse() {
-		Ok(id) => id,
-		Err(e) => {
-			eprintln!("Invalid Steam ID format: {}", e);
-			return Err(Status::BadRequest);
-		}
-	};
-
-	// Create a SteamId from the u64
 	let steam_id_parsed = SteamId::new(steam_id_u64);
 	let steam_ids = vec![steam_id_parsed];
 
-	// Get player summaries
 	match steam.get_player_summaries(steam_ids).await {
 		Ok(response) => {
 			if let Some(player) = response.first() {
 				let steam_user_details = SteamUserDetails::from(player.clone());
+				if let Ok(mut cache) = user_data_cache().write() {
+					cache.insert(steam_id_u64, (now, steam_user_details.clone()));
+				}
 				Ok(Json(steam_user_details))
 			} else {
 				Err(Status::NotFound)
@@ -159,35 +233,42 @@ pub async fn get_user_data(steam_id: String, config: &State<ConfigHandle>) -> Re
 
 // --- User's L4D2 posession state ---
 
-#[post("/games", data = "<steam_id>")] //Just check if the user has L4D2 bought on his account
-pub async fn get_user_games(steam_id: String, config: &State<ConfigHandle>) -> Result<Json<GamesInfo>, Status> {
+#[post("/games", data = "<steam_id>")]
+pub async fn get_user_games(
+	steam_id: String,
+	auth: AuthUser,
+	config: &State<ConfigHandle>,
+	client_ip: ClientIp,
+) -> Result<Json<GamesInfo>, Status> {
 	let config = config_snapshot(config);
+	let steam_id_u64 = parse_and_verify_steam_id(&steam_id, &auth)?;
+	check_steam_rest_rate_limits(&config, steam_id_u64, client_ip.0)?;
+
+	let cache_ttl = response_cache_ttl(&config);
+	let now = Instant::now();
+	if let Ok(cache) = games_cache().read()
+		&& let Some((cached_at, games_info)) = cache.get(&steam_id_u64)
+		&& now.duration_since(*cached_at) < cache_ttl
+	{
+		return Ok(Json(games_info.clone()));
+	}
+
 	let steam = Steam::new(&config.steam_web_api_key);
-
-	// Parse the steam_id string to u64
-	let steam_id_u64: u64 = match steam_id.parse() {
-		Ok(id) => id,
-		Err(e) => {
-			eprintln!("Invalid Steam ID format: {}", e);
-			return Err(Status::BadRequest);
-		}
-	};
-
-	// Create a SteamId from the u64
 	let steam_id_parsed = SteamId::new(steam_id_u64);
 
 	match steam.get_owned_games(steam_id_parsed, true, false, 550, false, None, "en", false).await {
 		Ok(response) => {
 			let mut owns_left4dead2 = false;
 			for game in response.games {
-				if game.appid == 550 { // Left 4 Dead 2 app ID
+				if game.appid == 550 {
 					owns_left4dead2 = true;
 					break;
 				}
 			}
-			let games_info = GamesInfo {
-				owns_left4dead2,
-			};
+			let games_info = GamesInfo { owns_left4dead2 };
+			if let Ok(mut cache) = games_cache().write() {
+				cache.insert(steam_id_u64, (now, games_info.clone()));
+			}
 			Ok(Json(games_info))
 		}
 		Err(e) => {
@@ -209,9 +290,11 @@ pub async fn options_games() -> Status {
 	Status::Ok
 }
 
-
 pub fn mount_steam_routes() -> Vec<rocket::Route> {
-	routes![get_user_data, get_user_games,
-		// Options (Status => OK)
-		options_user_data, options_games]
+	routes![
+		get_user_data,
+		get_user_games,
+		options_user_data,
+		options_games,
+	]
 }

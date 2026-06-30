@@ -10,6 +10,9 @@ use tokio::task::JoinHandle;
 #[cfg(feature = "server_query")]
 use gamedig::games::l4d2::query;
 
+#[cfg(any(feature = "server_query", feature = "rest_steam"))]
+mod utils;
+
 #[cfg(all(feature = "server_query", feature = "rest_api"))]
 mod LiveServerInfo;
 

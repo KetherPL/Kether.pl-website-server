@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::auth::{
 	build_session_cookie, clear_session_cookie, mint_session, AuthUser,
 };
+use crate::auth::csrf::CsrfGuard;
 use crate::json_api::utils::ok_status;
 use crate::steam_bot::registry::ConfigHandle;
 use rocket::http::{CookieJar, Status};
@@ -159,7 +160,11 @@ pub fn auth_me(user: AuthUser, config: &State<ConfigHandle>) -> Json<MeResponse>
 }
 
 #[post("/logout")]
-pub fn auth_logout(cookies: &CookieJar<'_>, config: &State<ConfigHandle>) -> Status {
+pub fn auth_logout(
+	cookies: &CookieJar<'_>,
+	config: &State<ConfigHandle>,
+	_csrf: CsrfGuard,
+) -> Status {
 	let config = config_snapshot(config);
 	cookies.remove(clear_session_cookie(&config));
 	ok_status()

@@ -76,3 +76,5 @@ admins = []
 admins_same_as_frontend = true
 # Maximum mute duration in minutes (default 7 days = 10080)
 mute_max_minutes = 10080
+# When true, commands from muted users are ignored
+ignore_muted_commands = true

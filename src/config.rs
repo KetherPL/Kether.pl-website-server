@@ -80,6 +80,10 @@ struct AdminConfig {
 	/// Maximum mute duration in minutes (default 7 days)
 	#[serde(default = "default_mute_max_minutes")]
 	mute_max_minutes: u64,
+
+	/// When true, commands from currently muted users are ignored
+	#[serde(default = "default_true")]
+	ignore_muted_commands: bool,
 }
 
 impl Default for AdminConfig {
@@ -88,6 +92,7 @@ impl Default for AdminConfig {
 			admins: Vec::new(),
 			admins_same_as_frontend: true,
 			mute_max_minutes: default_mute_max_minutes(),
+			ignore_muted_commands: true,
 		}
 	}
 }
@@ -261,6 +266,7 @@ pub struct Config {
 	pub steambot_admins: Vec<i64>,
 	pub steambot_admins_same_as_frontend: bool,
 	pub steambot_mute_max_minutes: u64,
+	pub steambot_ignore_muted_commands: bool,
 	pub server_ip: String,
 	pub server_port: u16,
 	pub server2_ip: String,
@@ -351,6 +357,7 @@ impl Config {
 			steambot_admins: config_file.steam.chat.admin.admins,
 			steambot_admins_same_as_frontend: config_file.steam.chat.admin.admins_same_as_frontend,
 			steambot_mute_max_minutes: config_file.steam.chat.admin.mute_max_minutes,
+			steambot_ignore_muted_commands: config_file.steam.chat.admin.ignore_muted_commands,
 			server_ip: config_file.server.ip,
 			server_port: config_file.server.port,
 			server2_ip: config_file.server2.ip,
@@ -417,6 +424,9 @@ impl Config {
 		}
 		if self.steambot_mute_max_minutes != new.steambot_mute_max_minutes {
 			change.live_applied.push("steam.chat.admin.mute_max_minutes");
+		}
+		if self.steambot_ignore_muted_commands != new.steambot_ignore_muted_commands {
+			change.live_applied.push("steam.chat.admin.ignore_muted_commands");
 		}
 		if self.steam_account != new.steam_account {
 			change.requires_restart.push("steam.bot.username");
@@ -515,6 +525,8 @@ admins = []
 admins_same_as_frontend = true
 # Maximum mute duration in minutes (default 7 days = 10080)
 mute_max_minutes = 10080
+# When true, commands from muted users are ignored
+ignore_muted_commands = true
 "#.to_string()
 	}
 	
@@ -756,6 +768,7 @@ poll_mention_user = true
 admins = [76561198000000003]
 admins_same_as_frontend = false
 mute_max_minutes = 4320
+ignore_muted_commands = false
 "#
 	}
 
@@ -779,6 +792,7 @@ mute_max_minutes = 4320
 		assert_eq!(parsed.steambot_admins, vec![76561198000000003]);
 		assert!(!parsed.steambot_admins_same_as_frontend);
 		assert_eq!(parsed.steambot_mute_max_minutes, 4320);
+		assert!(!parsed.steambot_ignore_muted_commands);
 		assert_eq!(parsed.server_ip, "127.0.0.1");
 		assert_eq!(parsed.server_port, 27015);
 		assert_eq!(parsed.server2_ip, "127.0.0.2");
@@ -807,6 +821,7 @@ mute_max_minutes = 4320
 		assert!(parsed.steambot_admins.is_empty());
 		assert!(parsed.steambot_admins_same_as_frontend);
 		assert_eq!(parsed.steambot_mute_max_minutes, 10080);
+		assert!(parsed.steambot_ignore_muted_commands);
 	}
 
 	#[test]

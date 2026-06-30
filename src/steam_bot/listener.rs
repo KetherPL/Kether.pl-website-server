@@ -478,6 +478,12 @@ async fn wait_before_retry() {
 /// * `Some(String)` - Command response if bot is mentioned and command is found
 /// * `None` - If bot is not mentioned or no command found
 fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) -> Option<String> {
+    let sender_id = u64::from(message.sender_steam_id);
+    let config = registry::config();
+    if config.steambot_ignore_muted_commands && mute::is_muted(sender_id) {
+        return None;
+    }
+
     // Check if bot is mentioned via preprocessed mentions
     let is_mentioned_preprocessed = if let Some(ref mentions) = message.preprocessed.mentions {
         mentions.mention_steamids.iter()
@@ -500,7 +506,6 @@ fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) ->
     let is_mentioned = is_mentioned_preprocessed || is_mentioned_bbcode;
 
     // Check configuration for commands without mention
-    let config = registry::config();
     let allow_without_mention = config.steam_bot_commands_without_mention;
 
     if !is_mentioned && !allow_without_mention {

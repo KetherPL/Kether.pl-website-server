@@ -129,6 +129,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
         *   Set `steam.bot.password = "your_steam_password"`
         *   Optional: `steam.chat.admin.admins_same_as_frontend = false` and `steam.chat.admin.admins = [...]` for a separate SteamBot admin list (`!mute`, `!unmute`, `!lsmute`)
         *   Optional: `steam.chat.admin.mute_max_minutes` (default 10080 = 7 days) caps maximum mute duration
+        *   Optional: `steam.chat.admin.ignore_muted_commands` (default `true`) ignores commands from muted users
     *   **Steam Chat:**
         *   Set `steam.chat.group_id` to your Steam group ID
         *   Set `steam.chat.chat_id` to the default chat channel ID (call-for-sub and general bot traffic)
@@ -215,6 +216,7 @@ poll_mention_user = false
 admins = []
 admins_same_as_frontend = true
 mute_max_minutes = 10080
+ignore_muted_commands = true
 ```
 
 **Features:**
@@ -236,7 +238,7 @@ With the `hot_reload` feature enabled (default in `kether_meta`), saving `config
 * `steam.chat.commands_without_mention`
 * `steam.chat.plan_chat_id`, `steam.chat.dedicated_plan_chat`, `steam.chat.plan_chat_keep_clean`, `steam.chat.plan_mention_user`
 * `steam.chat.poll_chat_id`, `steam.chat.dedicated_poll_chat`, `steam.chat.poll_chat_remove_command_message`, `steam.chat.poll_mention_user`
-* `steam.chat.admin.admins`, `steam.chat.admin.admins_same_as_frontend`, `steam.chat.admin.mute_max_minutes`
+* `steam.chat.admin.admins`, `steam.chat.admin.admins_same_as_frontend`, `steam.chat.admin.mute_max_minutes`, `steam.chat.admin.ignore_muted_commands`
 
 **Require a REPL restart (`R` / `restart`) or full process restart:**
 

@@ -1,9 +1,80 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::collections::HashMap;
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
+
+use once_cell::sync::OnceCell;
 use rocket::{http::Status, options, post, routes, serde::json::Json, State};
 use steam_rs::{steam_user::get_player_summaries::Player, steam_id::SteamId, Steam};
 use rocket::serde::{Serialize, Deserialize};
 use crate::steam_bot::registry::ConfigHandle;
+
+static PERSONA_NAME_CACHE: OnceCell<RwLock<HashMap<u64, (String, Instant)>>> = OnceCell::new();
+const PERSONA_CACHE_TTL: Duration = Duration::from_secs(1800); // 30 minutes
+
+fn persona_name_cache() -> &'static RwLock<HashMap<u64, (String, Instant)>> {
+	PERSONA_NAME_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Resolve Steam IDs to persona names, using a short-lived in-memory cache.
+///
+/// Returns only successfully resolved IDs. Missing entries mean the caller should
+/// fall back to displaying the raw Steam ID.
+pub async fn resolve_persona_names(
+	config: &crate::config::Config,
+	ids: &[u64],
+) -> HashMap<u64, String> {
+	if ids.is_empty() || config.steam_web_api_key.is_empty() {
+		return HashMap::new();
+	}
+
+	let now = Instant::now();
+	let mut resolved = HashMap::new();
+	let mut misses = Vec::new();
+
+	if let Ok(cache) = persona_name_cache().read() {
+		for &id in ids {
+			if let Some((name, cached_at)) = cache.get(&id)
+				&& now.duration_since(*cached_at) < PERSONA_CACHE_TTL
+			{
+				resolved.insert(id, name.clone());
+			} else {
+				misses.push(id);
+			}
+		}
+	} else {
+		misses.extend_from_slice(ids);
+	}
+
+	if misses.is_empty() {
+		return resolved;
+	}
+
+	let steam = Steam::new(&config.steam_web_api_key);
+	for chunk in misses.chunks(100) {
+		let steam_ids: Vec<SteamId> = chunk.iter().copied().map(SteamId::new).collect();
+		match steam.get_player_summaries(steam_ids).await {
+			Ok(players) => {
+				for player in players {
+					let Ok(id) = player.steam_id.to_string().parse::<u64>() else {
+						continue;
+					};
+					let name = player.persona_name.clone();
+					resolved.insert(id, name.clone());
+					if let Ok(mut cache) = persona_name_cache().write() {
+						cache.insert(id, (name, now));
+					}
+				}
+			}
+			Err(e) => {
+				eprintln!("Error resolving persona names: {}", e);
+			}
+		}
+	}
+
+	resolved
+}
 
 fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<crate::config::Config> {
 	match handle.read() {

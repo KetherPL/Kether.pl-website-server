@@ -47,7 +47,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   Uses JSON files for lightweight, persistent data storage.
     *   In-memory database with atomic file-based persistence (no external database required).
     *   Manages the following data:
-        *   **Binds:** Custom in-game keybinds with author, text, and embedded voting (upvote/downvote arrays).
+        *   **Binds:** Custom in-game keybinds with author, text, and vote tallies (voter Steam IDs kept internal; public GET returns counts only).
         *   **Bind Suggestions:** User-submitted bind suggestions.
         *   **Commands:** Server commands with descriptions.
         *   **Bind Votings:** User votes embedded directly in bind objects for data consistency.
@@ -165,7 +165,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
         * `/api/binds/*` - Get, add, update, delete binds (with embedded voting)
         * `/api/commands/*` - Get, add, update, delete commands
         * `/api/bind_suggestions/*` - Get, add, update, delete bind suggestions
-        * `/api/bind_votings/*` - Vote on binds (add/remove votes)
+        * `/api/bind_votings/*` - Vote on binds (add/remove votes; no public voter enumeration)
     * **Other Endpoints:**
         * `/api/LiveServerInfo` - Get live L4D2 server information
         * `/api/steam/*` - Steam user data and game ownership verification

@@ -8,10 +8,10 @@ use rocket::{
 };
 use rocket::serde::{Deserialize, Serialize};
 
-use crate::json_api::models::Bind;
+use crate::json_api::models::{bind_to_public, Bind, BindPublic};
 use crate::json_api::utils::{ok_status, storage_error_status};
 use crate::json_storage::JsonDatabase;
-use crate::auth::AdminUser;
+use crate::auth::{AdminUser, AuthUser};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
@@ -27,16 +27,32 @@ pub struct DeleteBindRequest {
 }
 
 #[get("/binds/<bind_id>")]
-pub fn get_bind(db: &State<JsonDatabase>, bind_id: i32) -> Result<Json<Bind>, Status> {
+pub fn get_bind(
+	db: &State<JsonDatabase>,
+	bind_id: i32,
+	viewer: Option<AuthUser>,
+) -> Result<Json<BindPublic>, Status> {
+	let viewer_id = viewer.map(|user| user.0);
 	db.get_bind(bind_id)
-		.map(Json)
+		.map(|bind| Json(bind_to_public(&bind, viewer_id)))
 		.map_err(|e| storage_error_status("getting bind", &e, &["not found"], &[]))
 }
 
 #[get("/binds/getBinds")]
-pub fn list_binds(db: &State<JsonDatabase>) -> Result<Json<Vec<Bind>>, Status> {
+pub fn list_binds(
+	db: &State<JsonDatabase>,
+	viewer: Option<AuthUser>,
+) -> Result<Json<Vec<BindPublic>>, Status> {
+	let viewer_id = viewer.map(|user| user.0);
 	db.get_all_binds()
-		.map(Json)
+		.map(|binds| {
+			Json(
+				binds
+					.iter()
+					.map(|bind| bind_to_public(bind, viewer_id))
+					.collect(),
+			)
+		})
 		.map_err(|e| storage_error_status("listing binds", &e, &[], &[]))
 }
 

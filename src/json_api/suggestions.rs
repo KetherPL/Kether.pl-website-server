@@ -11,13 +11,13 @@ use rocket::serde::{Deserialize, Serialize};
 use crate::json_api::models::BindSuggestion;
 use crate::json_api::utils::{ok_status, storage_error_status};
 use crate::json_storage::JsonDatabase;
+use crate::auth::{AdminUser, AuthUser};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
 pub struct CreateBindSuggestionRequest {
 	pub author: String,
 	pub text: String,
-	pub proposed_by: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -42,13 +42,15 @@ pub fn list_bind_suggestions(db: &State<JsonDatabase>) -> Result<Json<Vec<BindSu
 
 #[post("/bind_suggestions/addBindSuggestion", data = "<request>")]
 pub async fn create_bind_suggestion(
+	user: AuthUser,
 	db: &State<JsonDatabase>,
 	request: Json<CreateBindSuggestionRequest>,
 ) -> Result<Json<BindSuggestion>, Status> {
+	let proposed_by = user.0.to_string();
 	db.create_bind_suggestion(
 		request.author.clone(),
 		request.text.clone(),
-		request.proposed_by.clone(),
+		proposed_by,
 	).await
 	.map(Json)
 	.map_err(|e| storage_error_status("creating bind suggestion", &e, &[], &["already exists"]))
@@ -56,6 +58,7 @@ pub async fn create_bind_suggestion(
 
 #[post("/bind_suggestions/deleteBindSuggestion", data = "<request>")]
 pub async fn delete_bind_suggestion(
+	_admin: AdminUser,
 	db: &State<JsonDatabase>,
 	request: Json<DeleteBindSuggestionRequest>,
 ) -> Result<Json<usize>, Status> {
@@ -66,6 +69,7 @@ pub async fn delete_bind_suggestion(
 
 #[post("/bind_suggestions/updateBindSuggestion", data = "<bind_suggestion_to_update>")]
 pub async fn update_bind_suggestion(
+	_admin: AdminUser,
 	db: &State<JsonDatabase>,
 	bind_suggestion_to_update: Json<BindSuggestion>,
 ) -> Result<Json<BindSuggestion>, Status> {
@@ -81,6 +85,7 @@ pub async fn update_bind_suggestion(
 
 #[put("/bind_suggestions/<bind_suggestion_id>", data = "<bind_suggestion_to_update>")]
 pub async fn update_bind_suggestion_by_id(
+	_admin: AdminUser,
 	db: &State<JsonDatabase>,
 	bind_suggestion_id: i32,
 	bind_suggestion_to_update: Json<BindSuggestion>,

@@ -11,6 +11,7 @@ use rocket::serde::{Deserialize, Serialize};
 use crate::json_api::models::Bind;
 use crate::json_api::utils::{ok_status, storage_error_status};
 use crate::json_storage::JsonDatabase;
+use crate::auth::AdminUser;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
@@ -40,21 +41,33 @@ pub fn list_binds(db: &State<JsonDatabase>) -> Result<Json<Vec<Bind>>, Status> {
 }
 
 #[post("/binds/addBind", data = "<request>")]
-pub async fn create_bind(db: &State<JsonDatabase>, request: Json<CreateBindRequest>) -> Result<Json<Bind>, Status> {
+pub async fn create_bind(
+	_admin: AdminUser,
+	db: &State<JsonDatabase>,
+	request: Json<CreateBindRequest>,
+) -> Result<Json<Bind>, Status> {
 	db.create_bind(request.author.clone(), request.text.clone()).await
 		.map(Json)
 		.map_err(|e| storage_error_status("creating bind", &e, &[], &["already exists"]))
 }
 
 #[post("/binds/deleteBind", data = "<request>")]
-pub async fn delete_bind(db: &State<JsonDatabase>, request: Json<DeleteBindRequest>) -> Result<Json<usize>, Status> {
+pub async fn delete_bind(
+	_admin: AdminUser,
+	db: &State<JsonDatabase>,
+	request: Json<DeleteBindRequest>,
+) -> Result<Json<usize>, Status> {
 	db.delete_bind(request.id).await
 		.map(|_| Json(1))
 		.map_err(|e| storage_error_status("deleting bind", &e, &["not found"], &[]))
 }
 
 #[post("/binds/updateBind", data = "<bind_to_update>")]
-pub async fn update_bind(db: &State<JsonDatabase>, bind_to_update: Json<Bind>) -> Result<Json<Bind>, Status> {
+pub async fn update_bind(
+	_admin: AdminUser,
+	db: &State<JsonDatabase>,
+	bind_to_update: Json<Bind>,
+) -> Result<Json<Bind>, Status> {
 	db.update_bind(
 		bind_to_update.id,
 		bind_to_update.author.clone(),
@@ -68,6 +81,7 @@ pub async fn update_bind(db: &State<JsonDatabase>, bind_to_update: Json<Bind>) -
 
 #[put("/binds/<bind_id>", data = "<bind_to_update>")]
 pub async fn update_bind_by_id(
+	_admin: AdminUser,
 	db: &State<JsonDatabase>,
 	bind_id: i32,
 	bind_to_update: Json<Bind>,

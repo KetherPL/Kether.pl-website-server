@@ -50,12 +50,16 @@ pub fn apply_reload(handle: &ConfigHandle, path: &Path) -> Result<ConfigChange, 
 		});
 	}
 
-	let new_config =
-		Config::load_from(path).map_err(|e| format!("Failed to reload config: {}", e))?;
+	let mut new_config = {
+		let content = std::fs::read_to_string(path)
+			.map_err(|e| format!("Failed to reload config: {}", e))?;
+		Config::from_toml_str(&content).map_err(|e| format!("Failed to reload config: {}", e))?
+	};
 
 	let change = match handle.write() {
 		Ok(mut guard) => {
 			let previous = guard.clone();
+			new_config.prepare_for_runtime(Some(&previous));
 			let change = previous.diff(&new_config);
 			if !change.unchanged {
 				*guard = Arc::new(new_config);
@@ -65,6 +69,7 @@ pub fn apply_reload(handle: &ConfigHandle, path: &Path) -> Result<ConfigChange, 
 		Err(e) => {
 			let mut guard = e.into_inner();
 			let previous = guard.clone();
+			new_config.prepare_for_runtime(Some(&previous));
 			let change = previous.diff(&new_config);
 			if !change.unchanged {
 				*guard = Arc::new(new_config);

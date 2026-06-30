@@ -78,3 +78,14 @@ admins_same_as_frontend = true
 mute_max_minutes = 10080
 # When true, commands from muted users are ignored
 ignore_muted_commands = true
+
+# Session / Steam OpenID authentication (website login)
+[auth]
+# HMAC secret for signing session JWTs. Set a long random string in production.
+session_secret = ""
+# Frontend URL to redirect to after successful Steam login
+frontend_url = "https://kether.pl"
+# Optional cookie Domain attribute (leave empty for host-only cookies on the API host)
+cookie_domain = ""
+# Session lifetime in hours (default: 7 days)
+session_ttl_hours = 168

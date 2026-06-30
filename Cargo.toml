@@ -31,6 +31,10 @@ chrono-tz = "0.10"
 async-trait = "0.1"
 inventory = "0.3"
 notify-debouncer-full = { version = "0.7", optional = true }
+jsonwebtoken = { version = "9", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+rand = { version = "0.8", optional = true }
+urlencoding = { version = "2", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -45,12 +49,13 @@ strip = true
 
 [features]
 default = ["kether_meta", "sat"] # Features starter pack
-    kether_meta = ["rest_json_db", "rest_steam", "server_query", "rest_call_for_sub", "fastdl", "hot_reload"] # Meta package for Kether's needs
+    kether_meta = ["rest_json_db", "rest_steam", "server_query", "rest_call_for_sub", "fastdl", "hot_reload", "auth"] # Meta package for Kether's needs
+    auth = ["rest_api", "cfg", "dep:jsonwebtoken", "dep:reqwest", "dep:rand", "dep:urlencoding"]
     sat = ["rest_api"] # Satanixon's/StarterX4's-specific features ¯\_(ツ)_/¯
         fastdl = ["rest_api"] # FastDL http(!) server – for Source/GoldSrc games. Both for custom server content (e.g. maps, models, sounds) and (in our usecase) MOTDs.
                 # /↑\ Don't forget pass it through the http. Source/GoldSrc games don't support https for FastDL.
         hot_reload = ["cfg", "dep:notify-debouncer-full"] # Event-driven config.toml hot reload
-        rest_json_db = ["rest_api"] # REST API – JSON database for website (binds, bind suggestions, commands)
+        rest_json_db = ["rest_api", "auth"] # REST API – JSON database for website (binds, bind suggestions, commands)
         rest_steam = ["cfg", "rest_api", "dep:steam-rs"] # REST API – Steam part for website (fetch userdata, check if owns appid=550 (L4D2))
         server_query = ["cfg", "dep:gamedig", "dep:futures-util"] # Query L4D2 servers (either through CLI or REST API)
         rest_call_for_sub = ["cfg", "rest_api", "dep:SC_Sub_Poster"] # REST API – Uses NodeJS to post `!sub` requests on the Steam Group Chat

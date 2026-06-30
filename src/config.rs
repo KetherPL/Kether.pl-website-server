@@ -27,6 +27,9 @@ struct ConfigFile {
 
 	#[serde(default)]
 	server2: ServerConfig,
+
+	#[serde(default)]
+	auth: AuthConfig,
 }
 
 /// Steam-related configuration
@@ -170,6 +173,46 @@ impl ServerConfig {
 	}
 }
 
+fn default_session_ttl_hours() -> u64 {
+	168
+}
+
+fn default_frontend_url() -> String {
+	"https://kether.pl".to_string()
+}
+
+/// Session / Steam OpenID authentication settings
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct AuthConfig {
+	/// HMAC secret for signing session JWTs. If empty, a random secret is generated at startup.
+	#[serde(default)]
+	session_secret: String,
+
+	/// Frontend URL to redirect to after successful Steam login
+	#[serde(default = "default_frontend_url")]
+	frontend_url: String,
+
+	/// Optional cookie Domain attribute (e.g. ".kether.pl"). Leave empty for host-only cookies.
+	#[serde(default)]
+	cookie_domain: String,
+
+	/// Session lifetime in hours
+	#[serde(default = "default_session_ttl_hours")]
+	session_ttl_hours: u64,
+}
+
+impl Default for AuthConfig {
+	fn default() -> Self {
+		AuthConfig {
+			session_secret: String::new(),
+			frontend_url: default_frontend_url(),
+			cookie_domain: String::new(),
+			session_ttl_hours: default_session_ttl_hours(),
+		}
+	}
+}
+
 impl Default for ConfigFile {
 	fn default() -> Self {
 		ConfigFile {
@@ -177,6 +220,7 @@ impl Default for ConfigFile {
 			steam: SteamConfig::default(),
 			server: ServerConfig::default(),
 			server2: ServerConfig::default(),
+			auth: AuthConfig::default(),
 		}
 	}
 }
@@ -272,6 +316,10 @@ pub struct Config {
 	pub server2_ip: String,
 	pub server2_port: u16,
 	pub steam_bot_commands_without_mention: bool,
+	pub session_secret: String,
+	pub auth_frontend_url: String,
+	pub auth_cookie_domain: String,
+	pub auth_session_ttl_hours: u64,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -325,12 +373,16 @@ impl Config {
 		
 		// Load and parse TOML
 		let content = fs::read_to_string(&conf_path).await?;
-		Self::from_toml_str(&content).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+		let mut config = Self::from_toml_str(&content).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+		config.prepare_for_runtime(None);
+		Ok(config)
 	}
 
 	pub fn load_from(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
 		let content = std::fs::read_to_string(path)?;
-		Self::from_toml_str(&content).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+		let mut config = Self::from_toml_str(&content).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+		config.prepare_for_runtime(None);
+		Ok(config)
 	}
 
 	pub fn from_toml_str(content: &str) -> Result<Self, toml::de::Error> {
@@ -363,6 +415,34 @@ impl Config {
 			server2_ip: config_file.server2.ip,
 			server2_port: config_file.server2.port,
 			steam_bot_commands_without_mention: config_file.steam.chat.commands_without_mention,
+			session_secret: config_file.auth.session_secret,
+			auth_frontend_url: config_file.auth.frontend_url,
+			auth_cookie_domain: config_file.auth.cookie_domain,
+			auth_session_ttl_hours: config_file.auth.session_ttl_hours,
+		}
+	}
+
+	/// Ensures a runtime session secret exists without disturbing parsed config equality.
+	///
+	/// When reloading, an empty secret in the file inherits the previous runtime secret
+	/// so hot reload does not invalidate active sessions.
+	pub fn prepare_for_runtime(&mut self, previous: Option<&Config>) {
+		if !self.session_secret.is_empty() {
+			return;
+		}
+
+		if let Some(previous) = previous.filter(|cfg| !cfg.session_secret.is_empty()) {
+			self.session_secret = previous.session_secret.clone();
+			return;
+		}
+
+		#[cfg(feature = "auth")]
+		{
+			eprintln!(
+				"{} auth.session_secret is empty; generating ephemeral secret (sessions reset on restart)",
+				"Warning:".yellow()
+			);
+			self.session_secret = generate_ephemeral_session_secret();
 		}
 	}
 
@@ -439,6 +519,18 @@ impl Config {
 		}
 		if self.chat_id != new.chat_id {
 			change.requires_restart.push("steam.chat.chat_id");
+		}
+		if self.session_secret != new.session_secret {
+			change.requires_restart.push("auth.session_secret");
+		}
+		if self.auth_frontend_url != new.auth_frontend_url {
+			change.live_applied.push("auth.frontend_url");
+		}
+		if self.auth_cookie_domain != new.auth_cookie_domain {
+			change.live_applied.push("auth.cookie_domain");
+		}
+		if self.auth_session_ttl_hours != new.auth_session_ttl_hours {
+			change.live_applied.push("auth.session_ttl_hours");
 		}
 
 		change.unchanged = change.live_applied.is_empty() && change.requires_restart.is_empty();
@@ -527,6 +619,17 @@ admins_same_as_frontend = true
 mute_max_minutes = 10080
 # When true, commands from muted users are ignored
 ignore_muted_commands = true
+
+# Session / Steam OpenID authentication (website login)
+[auth]
+# HMAC secret for signing session JWTs. Set a long random string in production.
+session_secret = ""
+# Frontend URL to redirect to after successful Steam login
+frontend_url = "https://kether.pl"
+# Optional cookie Domain attribute (leave empty for host-only cookies on the API host)
+cookie_domain = ""
+# Session lifetime in hours (default: 7 days)
+session_ttl_hours = 168
 "#.to_string()
 	}
 	
@@ -540,6 +643,20 @@ ignore_muted_commands = true
 	/// * `false` otherwise
 	pub fn is_admin(&self, steam_id: i64) -> bool {
 		self.frontend_admins.contains(&steam_id)
+	}
+
+	/// Session cookie max-age in seconds
+	pub fn auth_session_max_age_secs(&self) -> i64 {
+		(self.auth_session_ttl_hours as i64).saturating_mul(3600)
+	}
+
+	/// Optional cookie Domain attribute; `None` when unset
+	pub fn auth_cookie_domain(&self) -> Option<&str> {
+		if self.auth_cookie_domain.trim().is_empty() {
+			None
+		} else {
+			Some(self.auth_cookie_domain.trim())
+		}
 	}
 
 	/// Returns the Steam ID list used for SteamBot admin commands.
@@ -658,6 +775,14 @@ ignore_muted_commands = true
 		(self.plan_chat_keep_clean && self.plan_chat_id != 0)
 			.then_some((self.chat_group_id, self.plan_chat_id))
 	}
+}
+
+#[cfg(feature = "auth")]
+fn generate_ephemeral_session_secret() -> String {
+	use rand::RngCore;
+	let mut bytes = [0u8; 32];
+	rand::thread_rng().fill_bytes(&mut bytes);
+	bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Gets the directory containing the current executable

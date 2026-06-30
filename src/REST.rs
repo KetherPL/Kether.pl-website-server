@@ -75,6 +75,7 @@ pub fn build_rocket() -> Rocket<Build> {
 
 	let cors = CorsOptions {
 		allowed_origins,
+		allow_credentials: true,
 		..Default::default()
 	}
 	.to_cors()
@@ -101,6 +102,10 @@ pub fn build_rocket() -> Rocket<Build> {
 			.expect("Failed to load JSON database");
 		rocket_build = rocket_build.manage(json_db);
 		rocket_build = rocket_build.mount("/api", mount_json_routes());
+	}
+	#[cfg(feature = "auth")]
+	{
+		rocket_build = rocket_build.mount("/api/auth", crate::auth::mount_auth_routes());
 	}
 	#[cfg(feature = "server_query")]
 	{

@@ -10,6 +10,7 @@ use rocket::serde::{Deserialize, Serialize};
 
 use crate::json_api::utils::{ok_status, storage_error_status};
 use crate::json_storage::JsonDatabase;
+use crate::auth::AuthUser;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
@@ -23,7 +24,6 @@ pub struct BindVoting {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
 pub struct CreateBindVoteRequest {
-	pub voter_steam_id: i64,
 	pub voted_bind_id: i32,
 	pub vote: String,
 }
@@ -37,7 +37,6 @@ pub struct DeleteBindVoteByIdRequest {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde")]
 pub struct DeleteBindVoteByUserRequest {
-	pub voter_steam_id: i64,
 	pub voted_bind_id: i32,
 }
 
@@ -111,19 +110,20 @@ pub fn list_bind_votes(db: &State<JsonDatabase>) -> Result<Json<Vec<BindVoting>>
 
 #[post("/bind_votings/addBindVoting", data = "<request>")]
 pub async fn create_bind_vote(
+	user: AuthUser,
 	db: &State<JsonDatabase>,
 	request: Json<CreateBindVoteRequest>,
 ) -> Result<Json<BindVoting>, Status> {
 	db.add_vote(
 		request.voted_bind_id,
-		request.voter_steam_id,
+		user.0,
 		&request.vote,
 	).await
 	.map_err(|e| storage_error_status("adding bind vote", &e, &["not found"], &[]))?;
 
 	Ok(Json(BindVoting {
 		id: 0,
-		voter_steam_id: request.voter_steam_id,
+		voter_steam_id: user.0,
 		voted_bind_id: request.voted_bind_id,
 		vote: request.vote.clone(),
 	}))
@@ -131,12 +131,13 @@ pub async fn create_bind_vote(
 
 #[post("/bind_votings/deleteBindVoting", data = "<request>")]
 pub async fn delete_bind_vote(
+	user: AuthUser,
 	db: &State<JsonDatabase>,
 	request: Json<DeleteBindVoteByUserRequest>,
 ) -> Result<Json<usize>, Status> {
 	db.remove_vote(
 		request.voted_bind_id,
-		request.voter_steam_id,
+		user.0,
 	).await
 	.map(|_| Json(1))
 	.map_err(|e| storage_error_status("removing bind vote", &e, &["not found"], &[]))

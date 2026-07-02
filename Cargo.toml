@@ -26,13 +26,13 @@ once_cell = "1.x"
 smol = "2.0.2"
 reedline = "0.46"
 crossterm = "0.29"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 async-trait = "0.1"
 inventory = "0.3"
 notify-debouncer-full = { version = "0.7", optional = true }
 jsonwebtoken = { version = "9", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
 rand = { version = "0.8", optional = true }
 urlencoding = { version = "2", optional = true }
 
@@ -49,7 +49,7 @@ strip = true
 
 [features]
 default = ["kether_meta", "sat"] # Features starter pack
-    kether_meta = ["rest_json_db", "rest_steam", "server_query", "rest_call_for_sub", "fastdl", "hot_reload", "auth"] # Meta package for Kether's needs
+    kether_meta = ["rest_json_db", "rest_steam", "server_query", "rest_call_for_sub", "fastdl", "hot_reload", "auth", "maps_bridge"] # Meta package for Kether's needs
     auth = ["rest_api", "cfg", "dep:jsonwebtoken", "dep:reqwest", "dep:rand", "dep:urlencoding"]
     sat = ["rest_api"] # Satanixon's/StarterX4's-specific features ¯\_(ツ)_/¯
         fastdl = ["rest_api"] # FastDL http(!) server – for Source/GoldSrc games. Both for custom server content (e.g. maps, models, sounds) and (in our usecase) MOTDs.
@@ -58,6 +58,7 @@ default = ["kether_meta", "sat"] # Features starter pack
         rest_json_db = ["rest_api", "auth"] # REST API – JSON database for website (binds, bind suggestions, commands)
         rest_steam = ["cfg", "rest_api", "auth", "dep:steam-rs"] # REST API – Steam part for website (fetch userdata, check if owns appid=550 (L4D2))
         server_query = ["cfg", "dep:gamedig", "dep:futures-util"] # Query L4D2 servers (either through CLI or REST API)
+        maps_bridge = ["rest_api", "cfg", "dep:reqwest"] # REST API – KetherServerDaemon registry sync and public maps list
         rest_call_for_sub = ["cfg", "rest_api", "dep:SC_Sub_Poster"] # REST API – Uses NodeJS to post `!sub` requests on the Steam Group Chat
             cfg = ["dep:colored", "dep:toml"] # config.toml – Steam Web API key, bot credentials, chat IDs
             rest_api = ["dep:rocket", "dep:rocket_cors", "dep:rocket_ws", "dep:futures-util"] # Base REST API support

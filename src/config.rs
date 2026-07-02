@@ -36,6 +36,9 @@ struct ConfigFile {
 
 	#[serde(default)]
 	steam_rest: SteamRestConfig,
+
+	#[serde(default)]
+	server_daemon: ServerDaemonConfig,
 }
 
 /// Steam-related configuration
@@ -259,6 +262,42 @@ impl Default for SteamRestConfig {
 	}
 }
 
+fn default_server_daemon_url() -> String {
+	"http://127.0.0.1:8080".to_string()
+}
+
+fn default_stale_after_secs() -> u64 {
+	600
+}
+
+/// KetherServerDaemon registry bridge settings
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct ServerDaemonConfig {
+	#[serde(default)]
+	registry_path: String,
+
+	#[serde(default)]
+	sync_api_key: String,
+
+	#[serde(default = "default_server_daemon_url")]
+	daemon_url: String,
+
+	#[serde(default = "default_stale_after_secs")]
+	stale_after_secs: u64,
+}
+
+impl Default for ServerDaemonConfig {
+	fn default() -> Self {
+		ServerDaemonConfig {
+			registry_path: String::new(),
+			sync_api_key: String::new(),
+			daemon_url: default_server_daemon_url(),
+			stale_after_secs: default_stale_after_secs(),
+		}
+	}
+}
+
 /// Session / Steam OpenID authentication settings
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -323,6 +362,7 @@ impl Default for ConfigFile {
 			auth: AuthConfig::default(),
 			live_server_info: LiveServerInfoConfig::default(),
 			steam_rest: SteamRestConfig::default(),
+			server_daemon: ServerDaemonConfig::default(),
 		}
 	}
 }
@@ -430,6 +470,10 @@ pub struct Config {
 	pub steam_rest_user_rate_limit: u32,
 	pub steam_rest_ip_rate_limit: u32,
 	pub steam_rest_cache_ttl_secs: u64,
+	pub server_daemon_registry_path: String,
+	pub server_daemon_sync_api_key: String,
+	pub server_daemon_url: String,
+	pub server_daemon_stale_after_secs: u64,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -540,6 +584,10 @@ impl Config {
 			steam_rest_user_rate_limit: config_file.steam_rest.requests_per_minute_per_user,
 			steam_rest_ip_rate_limit: config_file.steam_rest.requests_per_minute_per_ip,
 			steam_rest_cache_ttl_secs: config_file.steam_rest.response_cache_ttl_secs,
+			server_daemon_registry_path: config_file.server_daemon.registry_path,
+			server_daemon_sync_api_key: config_file.server_daemon.sync_api_key,
+			server_daemon_url: config_file.server_daemon.daemon_url,
+			server_daemon_stale_after_secs: config_file.server_daemon.stale_after_secs,
 		}
 	}
 
@@ -677,6 +725,18 @@ impl Config {
 		if self.steam_rest_cache_ttl_secs != new.steam_rest_cache_ttl_secs {
 			change.live_applied.push("steam_rest.response_cache_ttl_secs");
 		}
+		if self.server_daemon_registry_path != new.server_daemon_registry_path {
+			change.requires_restart.push("server_daemon.registry_path");
+		}
+		if self.server_daemon_sync_api_key != new.server_daemon_sync_api_key {
+			change.requires_restart.push("server_daemon.sync_api_key");
+		}
+		if self.server_daemon_url != new.server_daemon_url {
+			change.requires_restart.push("server_daemon.daemon_url");
+		}
+		if self.server_daemon_stale_after_secs != new.server_daemon_stale_after_secs {
+			change.live_applied.push("server_daemon.stale_after_secs");
+		}
 
 		change.unchanged = change.live_applied.is_empty() && change.requires_restart.is_empty();
 		change
@@ -787,6 +847,13 @@ rate_limit_burst = 5
 requests_per_minute_per_user = 10
 requests_per_minute_per_ip = 30
 response_cache_ttl_secs = 300
+
+# KetherServerDaemon registry bridge (maps list sync)
+[server_daemon]
+registry_path = "maps_registry.json"
+sync_api_key = ""
+daemon_url = "http://127.0.0.1:8080"
+stale_after_secs = 600
 "#.to_string()
 	}
 	

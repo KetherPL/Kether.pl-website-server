@@ -57,6 +57,11 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   Built with the Rocket web framework.
     *   Provides a comprehensive set of API endpoints for interacting with the server's features.
     *   Supports CORS (Cross-Origin Resource Sharing) to allow requests from the Kether.pl frontend (running on `localhost:3000` and `kether.pl`), and the L4D2 server.
+*   **KetherServerDaemon maps bridge:**
+    *   Receives a 1:1 copy of the daemon map registry via `POST /api/registry/sync` (Bearer token).
+    *   Serves the public installed-maps list at `GET /api/maps` from the synced registry only (empty when never synced; stale cached list when daemon is unreachable). Static fallback lives on the frontend.
+    *   Configure in `[server_daemon]`; use the same secret for `sync_api_key` and the daemon's `backend_api_key`.
+    *   Point the daemon at `backend_api_url = "http://127.0.0.1:3001/api"` (website-server port).
 *   **FastDL Server:**
     *   **HTTP File Server:** Serves static files for Source/GoldSrc games (maps, models, sounds, MOTDs) via HTTP.
     *   **Directory Listings:** Automatic HTML directory listings for folders without `index.html` files.
@@ -217,6 +222,13 @@ admins = []
 admins_same_as_frontend = true
 mute_max_minutes = 10080
 ignore_muted_commands = true
+
+# KetherServerDaemon registry bridge
+[server_daemon]
+registry_path = "maps_registry.json"
+sync_api_key = "shared-secret-with-daemon"
+daemon_url = "http://127.0.0.1:8080"
+stale_after_secs = 600
 ```
 
 **Features:**

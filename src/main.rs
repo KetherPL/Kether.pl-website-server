@@ -52,6 +52,9 @@ mod plan_ws;
 #[cfg(feature = "auth")]
 mod auth;
 
+#[cfg(feature = "maps_bridge")]
+mod maps_bridge;
+
 mod repl;
 
 /// Command line arguments parser for the Kether Internal Services Server

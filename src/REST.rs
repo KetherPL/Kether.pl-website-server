@@ -8,6 +8,8 @@ use crate::LiveServerInfo::{live_server_info, live_server_info_kether, live_serv
 use crate::steam_rest::mount_steam_routes;
 #[cfg(feature = "rest_json_db")]
 use crate::json_cmds_binds_rest::mount_json_routes;
+#[cfg(feature = "maps_bridge")]
+use crate::maps_bridge::{mount_maps_bridge_routes, MapsBridgeState};
 #[cfg(feature = "rest_json_db")]
 use crate::json_storage::JsonDatabase;
 use rocket::{fs::{FileServer, Options}, routes, Build, Rocket};
@@ -91,7 +93,7 @@ pub fn build_rocket() -> Rocket<Build> {
 		crate::steam_bot::plan_broadcast::init_broadcaster();
 	}
 
-	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "rest_json_db", feature = "server_query"))]
+	#[cfg(any(feature = "rest_steam", feature = "rest_call_for_sub", feature = "rest_json_db", feature = "server_query", feature = "maps_bridge"))]
 	{
 		rocket_build = rocket_build.manage(registry::config_handle());
 	}
@@ -102,6 +104,18 @@ pub fn build_rocket() -> Rocket<Build> {
 			.expect("Failed to load JSON database");
 		rocket_build = rocket_build.manage(json_db);
 		rocket_build = rocket_build.mount("/api", mount_json_routes());
+	}
+	#[cfg(feature = "maps_bridge")]
+	{
+		let base_path = crate::config::exe_dir().expect("Failed to get executable directory");
+		let config = registry::config_handle()
+			.read()
+			.expect("config lock poisoned")
+			.clone();
+		let maps_bridge = MapsBridgeState::from_config(&config, base_path)
+			.expect("Failed to initialize maps bridge");
+		rocket_build = rocket_build.manage(maps_bridge);
+		rocket_build = rocket_build.mount("/api", mount_maps_bridge_routes());
 	}
 	#[cfg(feature = "auth")]
 	{

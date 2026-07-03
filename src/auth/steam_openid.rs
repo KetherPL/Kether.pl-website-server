@@ -2,14 +2,14 @@
 
 use std::collections::HashMap;
 
+use crate::auth::exchange::ExchangeCodeStore;
 use crate::auth::{
-	api_origin_from_host, build_session_cookie, clear_session_cookie, mint_session, verify_session,
+	mint_session, verify_session, OptionalBearer,
 };
 use crate::auth::csrf::CsrfGuard;
 use crate::json_api::utils::ok_status;
 use crate::steam_bot::registry::ConfigHandle;
-use rocket::http::{CookieJar, Status};
-use rocket::http::uri::Host;
+use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome, Request};
 use rocket::response::Redirect;
 use rocket::{get, options, post, routes, Route, State};
@@ -34,6 +34,21 @@ fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<crate::config
 pub struct MeResponse {
 	pub steamid: String,
 	pub is_admin: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub(crate) struct ExchangeRequest {
+	code: String,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+pub(crate) struct ExchangeResponse {
+	access_token: String,
+	steamid: String,
+	is_admin: bool,
+	expires_in: u64,
 }
 
 /// Parsed Steam OpenID callback query parameters.
@@ -124,10 +139,9 @@ async fn verify_openid_response(params: &HashMap<String, String>) -> Result<(), 
 
 #[get("/steam/callback")]
 pub async fn steam_callback(
-	host: &Host<'_>,
 	openid: OpenIdParams,
-	cookies: &CookieJar<'_>,
 	config: &State<ConfigHandle>,
+	exchange_store: &State<ExchangeCodeStore>,
 ) -> Result<Redirect, Status> {
 	let params = &openid.0;
 
@@ -143,22 +157,46 @@ pub async fn steam_callback(
 	})?;
 
 	let config = config_snapshot(config);
-	let token = mint_session(steam_id, &config).map_err(|e| {
+	let code = exchange_store.issue_code(steam_id);
+	let frontend_base = config.auth_frontend_url.trim_end_matches('/');
+	let callback_url = format!("{frontend_base}/auth/callback?code={code}");
+	Ok(Redirect::to(callback_url))
+}
+
+#[post("/exchange", data = "<body>")]
+pub fn auth_exchange(
+	body: Json<ExchangeRequest>,
+	config: &State<ConfigHandle>,
+	exchange_store: &State<ExchangeCodeStore>,
+	_csrf: CsrfGuard,
+) -> Result<Json<ExchangeResponse>, Status> {
+	let config = config_snapshot(config);
+
+	let Some(steam_id) = exchange_store.consume_code(&body.code) else {
+		return Err(Status::BadRequest);
+	};
+
+	let access_token = mint_session(steam_id, &config).map_err(|e| {
 		eprintln!("Failed to mint session JWT: {}", e);
 		Status::InternalServerError
 	})?;
 
-	let api_origin = api_origin_from_host(host);
-	cookies.add(build_session_cookie(&token, &config, &api_origin));
-	Ok(Redirect::to(config.auth_frontend_url.clone()))
+	let expires_in = config.auth_session_max_age_secs().max(0) as u64;
+
+	Ok(Json(ExchangeResponse {
+		access_token,
+		steamid: steam_id.to_string(),
+		is_admin: config.is_admin(steam_id),
+		expires_in,
+	}))
 }
 
 #[get("/me")]
-pub fn auth_me(cookies: &CookieJar<'_>, config: &State<ConfigHandle>) -> Json<Option<MeResponse>> {
+pub fn auth_me(bearer: OptionalBearer, config: &State<ConfigHandle>) -> Json<Option<MeResponse>> {
 	let config = config_snapshot(config);
-	let response = cookies
-		.get(crate::auth::SESSION_COOKIE_NAME)
-		.and_then(|cookie| verify_session(cookie.value(), &config.session_secret))
+	let response = bearer
+		.0
+		.and_then(|token| verify_session(&token, &config.session_secret))
 		.map(|steam_id| MeResponse {
 			steamid: steam_id.to_string(),
 			is_admin: config.is_admin(steam_id),
@@ -167,20 +205,17 @@ pub fn auth_me(cookies: &CookieJar<'_>, config: &State<ConfigHandle>) -> Json<Op
 }
 
 #[post("/logout")]
-pub fn auth_logout(
-	host: &Host<'_>,
-	cookies: &CookieJar<'_>,
-	config: &State<ConfigHandle>,
-	_csrf: CsrfGuard,
-) -> Status {
-	let config = config_snapshot(config);
-	let api_origin = api_origin_from_host(host);
-	cookies.remove(clear_session_cookie(&config, &api_origin));
+pub fn auth_logout(_csrf: CsrfGuard) -> Status {
 	ok_status()
 }
 
 #[options("/steam/callback")]
 pub fn options_steam_callback() -> Status {
+	ok_status()
+}
+
+#[options("/exchange")]
+pub fn options_auth_exchange() -> Status {
 	ok_status()
 }
 
@@ -197,9 +232,11 @@ pub fn options_auth_logout() -> Status {
 pub fn mount_auth_routes() -> Vec<Route> {
 	routes![
 		steam_callback,
+		auth_exchange,
 		auth_me,
 		auth_logout,
 		options_steam_callback,
+		options_auth_exchange,
 		options_auth_me,
 		options_auth_logout,
 	]

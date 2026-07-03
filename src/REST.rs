@@ -121,7 +121,9 @@ pub fn build_rocket() -> Rocket<Build> {
 	}
 	#[cfg(feature = "auth")]
 	{
-		rocket_build = rocket_build.mount("/api/auth", crate::auth::mount_auth_routes());
+		rocket_build = rocket_build
+			.manage(crate::auth::ExchangeCodeStore::new())
+			.mount("/api/auth", crate::auth::mount_auth_routes());
 	}
 	#[cfg(feature = "server_query")]
 	{

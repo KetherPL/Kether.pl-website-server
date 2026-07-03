@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 mod csrf;
+mod exchange;
 mod steam_openid;
 
 use crate::config::Config;
@@ -14,6 +15,7 @@ use rocket::time::Duration;
 use rocket::State;
 use rocket::serde::{Deserialize, Serialize};
 
+pub use exchange::ExchangeCodeStore;
 pub use steam_openid::mount_auth_routes;
 
 pub const SESSION_COOKIE_NAME: &str = "session";
@@ -38,6 +40,24 @@ pub fn mint_session(steam_id: i64, config: &Config) -> Result<String, jsonwebtok
 		&claims,
 		&EncodingKey::from_secret(config.session_secret.as_bytes()),
 	)
+}
+
+/// Extract a Bearer token from the Authorization header.
+pub fn extract_bearer_token(request: &Request<'_>) -> Option<String> {
+	let header = request.headers().get_one("Authorization")?;
+	parse_bearer_header(header)
+}
+
+fn parse_bearer_header(header: &str) -> Option<String> {
+	const PREFIX: &str = "Bearer ";
+	if !header.starts_with(PREFIX) {
+		return None;
+	}
+	let token = header[PREFIX.len()..].trim();
+	if token.is_empty() {
+		return None;
+	}
+	Some(token.to_string())
 }
 
 /// Verify a session JWT and return the Steam ID if valid.
@@ -126,8 +146,20 @@ fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<Config> {
 	}
 }
 
-/// Authenticated user extracted from the session cookie.
+/// Authenticated user extracted from the Authorization Bearer header.
 pub struct AuthUser(pub i64);
+
+/// Optional Bearer token from the Authorization header (for public session introspection).
+pub struct OptionalBearer(pub Option<String>);
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for OptionalBearer {
+	type Error = ();
+
+	async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+		Outcome::Success(OptionalBearer(extract_bearer_token(request)))
+	}
+}
 
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for AuthUser {
@@ -146,12 +178,7 @@ impl<'r> FromRequest<'r> for AuthUser {
 
 		let config = config_snapshot(config_handle);
 
-		let token = request
-			.cookies()
-			.get(SESSION_COOKIE_NAME)
-			.map(|cookie| cookie.value().to_string());
-
-		let Some(token) = token else {
+		let Some(token) = extract_bearer_token(request) else {
 			return Outcome::Error((Status::Unauthorized, ()));
 		};
 
@@ -222,5 +249,30 @@ frontend_url = "{frontend_url}"
 			&config,
 			"https://21370000.xyz"
 		));
+	}
+
+	#[test]
+	fn parse_bearer_header_accepts_valid_token() {
+		assert_eq!(
+			parse_bearer_header("Bearer jwt-token-123"),
+			Some("jwt-token-123".to_string())
+		);
+	}
+
+	#[test]
+	fn parse_bearer_header_rejects_invalid() {
+		for header in ["", "Basic abc", "Bearer ", "bearer x"] {
+			assert_eq!(parse_bearer_header(header), None);
+		}
+	}
+
+	#[test]
+	fn verify_session_round_trip() {
+		let config = test_config("https://kether.pl");
+		let token = mint_session(76561198000000000, &config).expect("mint");
+		assert_eq!(
+			verify_session(&token, &config.session_secret),
+			Some(76561198000000000)
+		);
 	}
 }

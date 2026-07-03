@@ -84,7 +84,7 @@ ignore_muted_commands = true
 # HMAC secret for signing session JWTs. Set a long random string in production.
 session_secret = ""
 # Frontend URL to redirect to after successful Steam login (must match where users browse the site)
-frontend_url = "https://21370000.xyz"
+frontend_url = "https://kether.pl"
 # Optional cookie Domain attribute (leave empty for host-only cookies on the API host)
 cookie_domain = ""
 # Session lifetime in hours (default: 7 days)

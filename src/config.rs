@@ -849,6 +849,7 @@ requests_per_minute_per_ip = 30
 response_cache_ttl_secs = 300
 
 # KetherServerDaemon registry bridge (maps list sync)
+# workshop_previews.json is auto-created beside registry_path for Steam cover cache.
 [server_daemon]
 registry_path = "maps_registry.json"
 sync_api_key = ""

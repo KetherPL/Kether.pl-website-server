@@ -3,6 +3,7 @@
 mod mapping;
 mod models;
 mod registry_store;
+mod workshop_previews;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -22,12 +23,17 @@ use models::{
     UpdatesResponse,
 };
 use registry_store::{load_registry, resolve_data_path, save_registry};
+use workshop_previews::{
+    load_preview_cache, preview_cache_path_from_registry, refresh_preview_cache,
+    STEAM_PUBLISHED_FILE_DETAILS_URL,
+};
 
 pub struct MapsBridgeState {
     pub registry_path: PathBuf,
     pub daemon_url: String,
     pub stale_after_secs: u64,
     http_client: Client,
+    published_file_details_url: String,
 }
 
 impl MapsBridgeState {
@@ -51,7 +57,30 @@ impl MapsBridgeState {
             daemon_url: config.server_daemon_url.clone(),
             stale_after_secs: config.server_daemon_stale_after_secs,
             http_client,
+            published_file_details_url: STEAM_PUBLISHED_FILE_DETAILS_URL.to_string(),
         })
+    }
+
+    fn preview_cache_path(&self) -> PathBuf {
+        preview_cache_path_from_registry(&self.registry_path)
+    }
+
+    pub async fn refresh_workshop_previews(
+        &self,
+        maps: &[DaemonMapEntry],
+        api_key: Option<&str>,
+    ) {
+        if let Err(error) = refresh_preview_cache(
+            &self.http_client,
+            &self.published_file_details_url,
+            &self.preview_cache_path(),
+            maps,
+            api_key,
+        )
+        .await
+        {
+            eprintln!("Workshop preview cache refresh failed (non-fatal): {}", error);
+        }
     }
 
     pub fn verify_sync_token(&self, config: &crate::config::Config, auth_header: Option<&str>) -> bool {
@@ -126,7 +155,10 @@ impl MapsBridgeState {
         }
     }
 
-    pub async fn build_maps_response(&self) -> Result<MapsListResponse, String> {
+    pub async fn build_maps_response(
+        &self,
+        steam_api_key: Option<&str>,
+    ) -> Result<MapsListResponse, String> {
         let mut registry = load_registry(&self.registry_path)?;
 
         let mut refreshed = false;
@@ -134,6 +166,7 @@ impl MapsBridgeState {
             match self.fetch_maps_from_daemon().await {
                 Ok(maps) => {
                     save_registry(&self.registry_path, maps.clone())?;
+                    self.refresh_workshop_previews(&maps, steam_api_key).await;
                     registry.maps = maps;
                     registry.last_synced_at = Some(Utc::now());
                     refreshed = true;
@@ -154,10 +187,11 @@ impl MapsBridgeState {
         let stale = !refreshed
             && (self.registry_is_stale(registry.last_synced_at) || registry.last_synced_at.is_none());
 
+        let preview_cache = load_preview_cache(&self.preview_cache_path())?;
         let maps = registry
             .maps
             .iter()
-            .map(daemon_entry_to_website)
+            .map(|entry| daemon_entry_to_website(entry, &preview_cache))
             .collect();
 
         Ok(MapsListResponse {
@@ -207,18 +241,27 @@ impl<'r> FromRequest<'r> for DaemonSyncAuth {
 }
 
 #[post("/registry/sync", data = "<body>")]
-pub fn sync_registry(
+pub async fn sync_registry(
     _auth: DaemonSyncAuth,
     bridge: &State<MapsBridgeState>,
+    config_handle: &State<ConfigHandle>,
     body: Json<SyncRequest>,
 ) -> Result<Status, Status> {
-    bridge
-        .apply_sync(body.maps.clone())
-        .map(|_| Status::Ok)
-        .map_err(|e| {
-            eprintln!("Registry sync failed: {}", e);
-            Status::InternalServerError
-        })
+    let maps = body.maps.clone();
+    bridge.apply_sync(maps.clone()).map_err(|e| {
+        eprintln!("Registry sync failed: {}", e);
+        Status::InternalServerError
+    })?;
+
+    let api_key = config_handle
+        .read()
+        .ok()
+        .map(|config| config.steam_web_api_key.clone());
+
+    let key_ref = api_key.as_deref();
+    bridge.refresh_workshop_previews(&maps, key_ref).await;
+
+    Ok(Status::Ok)
 }
 
 #[get("/registry/updates")]
@@ -229,9 +272,18 @@ pub fn registry_updates(_auth: DaemonSyncAuth) -> Json<UpdatesResponse> {
 }
 
 #[get("/maps")]
-pub async fn list_maps(bridge: &State<MapsBridgeState>) -> Result<Json<MapsListResponse>, Status> {
+pub async fn list_maps(
+    bridge: &State<MapsBridgeState>,
+    config_handle: &State<ConfigHandle>,
+) -> Result<Json<MapsListResponse>, Status> {
+    let api_key = config_handle
+        .read()
+        .ok()
+        .map(|config| config.steam_web_api_key.clone());
+    let key_ref = api_key.as_deref();
+
     bridge
-        .build_maps_response()
+        .build_maps_response(key_ref)
         .await
         .map(Json)
         .map_err(|e| {
@@ -291,7 +343,7 @@ daemon_url = ""
         .expect("config");
 
         let bridge = MapsBridgeState::from_config(&config, dir.path().to_path_buf()).expect("bridge");
-        let response = bridge.build_maps_response().await.expect("response");
+        let response = bridge.build_maps_response(None).await.expect("response");
 
         assert!(response.maps.is_empty());
         assert!(response.stale);
@@ -332,11 +384,68 @@ stale_after_secs = 0
         .expect("config");
 
         let bridge = MapsBridgeState::from_config(&config, dir.path().to_path_buf()).expect("bridge");
-        let response = bridge.build_maps_response().await.expect("response");
+        let response = bridge.build_maps_response(None).await.expect("response");
 
         assert_eq!(response.maps.len(), 1);
         assert_eq!(response.maps[0].mapName, "Live Map");
         assert!(!response.stale);
         assert_eq!(response.source, MapsDataSource::Registry);
+    }
+
+    #[tokio::test]
+    async fn build_maps_response_serves_workshop_preview_from_cache() {
+        use workshop_previews::{save_preview_cache, PreviewCacheEntry, WorkshopPreviewCache};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry_path = dir.path().join("maps_registry.json");
+        let preview_path = dir.path().join("workshop_previews.json");
+
+        let entry = DaemonMapEntry {
+            id: 1,
+            name: "2 Evil Eyes".to_string(),
+            source_url: String::new(),
+            source_kind: DaemonSourceKind::Workshop,
+            workshop_id: Some(381419931),
+            installed_path: "2evileyes.vpk".to_string(),
+            installed_at: Utc::now(),
+            workshop_updated_at: None,
+            version: None,
+            checksum: None,
+            checksum_kind: None,
+        };
+
+        save_registry(&registry_path, vec![entry]).expect("save");
+
+        let mut cache = WorkshopPreviewCache::default();
+        cache.insert(
+            381419931,
+            PreviewCacheEntry {
+                preview_url: "https://images.steamusercontent.com/ugc/test-preview/".to_string(),
+                workshop_updated_at: None,
+                fetched_at: Utc::now(),
+            },
+        );
+        save_preview_cache(&preview_path, &cache).expect("save previews");
+
+        let config = Config::from_toml_str(&format!(
+            r#"
+frontend_admins = []
+[server_daemon]
+registry_path = "{}"
+daemon_url = ""
+stale_after_secs = 0
+"#,
+            registry_path.display()
+        ))
+        .expect("config");
+
+        let bridge = MapsBridgeState::from_config(&config, dir.path().to_path_buf()).expect("bridge");
+        let response = bridge.build_maps_response(None).await.expect("response");
+
+        assert_eq!(response.maps.len(), 1);
+        assert_eq!(
+            response.maps[0].previewUrl.as_deref(),
+            Some("https://images.steamusercontent.com/ugc/test-preview/")
+        );
     }
 }

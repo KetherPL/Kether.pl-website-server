@@ -96,6 +96,31 @@ pub struct DaemonApiResponse {
     pub error: Option<String>,
 }
 
+/// Mirrors KetherServerDaemon `L4d2CenterCatalogEntry`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct L4d2CenterCatalogEntry {
+    pub name: String,
+    pub size: u64,
+    pub md5: String,
+    pub download_link: String,
+    pub installed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_id: Option<u64>,
+    pub status: String,
+}
+
+/// Daemon generic API envelope for typed responses.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct DaemonTypedApiResponse<T> {
+    pub success: bool,
+    #[serde(default)]
+    pub data: Option<T>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 pub fn daemon_source_to_website(kind: DaemonSourceKind) -> &'static str {
     match kind {
         DaemonSourceKind::Workshop => "Workshop",

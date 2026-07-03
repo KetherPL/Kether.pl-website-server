@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+mod admin_install;
 mod mapping;
 mod models;
 mod registry_store;
@@ -13,14 +14,22 @@ use reqwest::Client;
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome, Request};
 use rocket::serde::json::Json;
+use rocket::serde::{Deserialize, Serialize};
 use rocket::{get, post, routes, Route, State};
 
+use crate::auth::AdminUser;
 use crate::steam_bot::registry::ConfigHandle;
+
+use admin_install::{
+    proxy_daemon_install_map, proxy_daemon_l4d2center_install, resolve_install_target,
+    resolved_mode_label, validate_optional_install_name, AdminInstallMapRequest,
+    AdminInstallMapResponse, ResolvedInstallTarget,
+};
 
 use mapping::daemon_entry_to_website;
 use models::{
-    DaemonApiResponse, DaemonMapEntry, MapsDataSource, MapsListResponse, SyncRequest,
-    UpdatesResponse,
+    DaemonApiResponse, DaemonMapEntry, DaemonTypedApiResponse, L4d2CenterCatalogEntry,
+    MapsDataSource, MapsListResponse, SyncRequest, UpdatesResponse,
 };
 use registry_store::{load_registry, resolve_data_path, save_registry};
 use workshop_previews::{
@@ -33,6 +42,7 @@ pub struct MapsBridgeState {
     pub daemon_url: String,
     pub stale_after_secs: u64,
     http_client: Client,
+    install_http_client: Client,
     published_file_details_url: String,
 }
 
@@ -48,6 +58,16 @@ impl MapsBridgeState {
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
+        let install_http_client = Client::builder()
+            .timeout(Duration::from_secs(600))
+            .user_agent(format!(
+                "{}/{}",
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION")
+            ))
+            .build()
+            .map_err(|e| format!("Failed to build install HTTP client: {}", e))?;
+
         Ok(Self {
             registry_path: resolve_data_path(
                 &base_path,
@@ -57,6 +77,7 @@ impl MapsBridgeState {
             daemon_url: config.server_daemon_url.clone(),
             stale_after_secs: config.server_daemon_stale_after_secs,
             http_client,
+            install_http_client,
             published_file_details_url: STEAM_PUBLISHED_FILE_DETAILS_URL.to_string(),
         })
     }
@@ -145,6 +166,86 @@ impl MapsBridgeState {
         }
 
         body.data.ok_or_else(|| "Daemon response missing data".to_string())
+    }
+
+    pub async fn fetch_l4d2center_catalog(&self) -> Result<Vec<L4d2CenterCatalogEntry>, String> {
+        if self.daemon_url.trim().is_empty() {
+            return Err("Daemon URL not configured".to_string());
+        }
+
+        let url = format!(
+            "{}/api/maps/l4d2center",
+            self.daemon_url.trim_end_matches('/')
+        );
+
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Daemon request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Daemon returned HTTP {}", response.status()));
+        }
+
+        let body: DaemonTypedApiResponse<Vec<L4d2CenterCatalogEntry>> = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse daemon response: {e}"))?;
+
+        if !body.success {
+            return Err(body
+                .error
+                .unwrap_or_else(|| "Daemon returned success=false".to_string()));
+        }
+
+        body.data.ok_or_else(|| "Daemon response missing data".to_string())
+    }
+
+    pub async fn refresh_registry_from_daemon(&self, steam_api_key: Option<&str>) -> Result<(), String> {
+        let maps = self.fetch_maps_from_daemon().await?;
+        save_registry(&self.registry_path, maps.clone())?;
+        self.refresh_workshop_previews(&maps, steam_api_key).await;
+        Ok(())
+    }
+
+    pub async fn admin_install_map(
+        &self,
+        request: AdminInstallMapRequest,
+    ) -> Result<AdminInstallMapResponse, String> {
+        if self.daemon_url.trim().is_empty() {
+            return Err("Daemon URL not configured".to_string());
+        }
+
+        let name = validate_optional_install_name(&request.name)?;
+        let target = resolve_install_target(&request.mode, &request.input)
+            .map_err(|error| error.to_string())?;
+
+        let map_id = match &target {
+            ResolvedInstallTarget::L4d2Center { name: catalog_name } => {
+                proxy_daemon_l4d2center_install(
+                    &self.install_http_client,
+                    &self.daemon_url,
+                    catalog_name,
+                )
+                .await?
+            }
+            _ => {
+                proxy_daemon_install_map(
+                    &self.install_http_client,
+                    &self.daemon_url,
+                    &target,
+                    name,
+                )
+                .await?
+            }
+        };
+
+        Ok(AdminInstallMapResponse {
+            map_id,
+            resolved_mode: resolved_mode_label(&target).to_string(),
+        })
     }
 
     fn empty_stale_response() -> MapsListResponse {
@@ -271,6 +372,83 @@ pub fn registry_updates(_auth: DaemonSyncAuth) -> Json<UpdatesResponse> {
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AdminInstallErrorResponse {
+    pub error: String,
+}
+
+#[post("/maps/admin/install", data = "<body>")]
+pub async fn admin_install_map(
+    _admin: AdminUser,
+    bridge: &State<MapsBridgeState>,
+    config_handle: &State<ConfigHandle>,
+    body: Json<AdminInstallMapRequest>,
+) -> Result<Json<AdminInstallMapResponse>, (Status, Json<AdminInstallErrorResponse>)> {
+    let api_key = config_handle
+        .read()
+        .ok()
+        .map(|config| config.steam_web_api_key.clone());
+    let key_ref = api_key.as_deref();
+
+    let response = bridge
+        .admin_install_map(body.into_inner())
+        .await
+        .map_err(|error| {
+            eprintln!("Admin map install failed: {}", error);
+            let status = if error.contains("not configured")
+                || error.contains("Daemon request failed")
+                || error.contains("Daemon returned HTTP")
+            {
+                Status::BadGateway
+            } else if error.contains("required")
+                || error.contains("Invalid")
+                || error.contains("Expected")
+                || error.contains("too long")
+                || error.contains("Could not detect")
+            {
+                Status::BadRequest
+            } else {
+                Status::InternalServerError
+            };
+            (status, Json(AdminInstallErrorResponse { error }))
+        })?;
+
+    if let Err(error) = bridge.refresh_registry_from_daemon(key_ref).await {
+        eprintln!("Registry refresh after install failed (non-fatal): {}", error);
+    }
+
+    Ok(Json(response))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct L4d2CenterCatalogErrorResponse {
+    pub error: String,
+}
+
+#[get("/maps/l4d2center")]
+pub async fn list_l4d2center_catalog(
+    bridge: &State<MapsBridgeState>,
+) -> Result<Json<Vec<L4d2CenterCatalogEntry>>, (Status, Json<L4d2CenterCatalogErrorResponse>)> {
+    bridge
+        .fetch_l4d2center_catalog()
+        .await
+        .map(Json)
+        .map_err(|error| {
+            eprintln!("L4D2Center catalog fetch failed: {error}");
+            let status = if error.contains("not configured")
+                || error.contains("Daemon request failed")
+                || error.contains("Daemon returned HTTP")
+            {
+                Status::BadGateway
+            } else {
+                Status::InternalServerError
+            };
+            (status, Json(L4d2CenterCatalogErrorResponse { error }))
+        })
+}
+
 #[get("/maps")]
 pub async fn list_maps(
     bridge: &State<MapsBridgeState>,
@@ -293,7 +471,13 @@ pub async fn list_maps(
 }
 
 pub fn mount_maps_bridge_routes() -> Vec<Route> {
-    routes![sync_registry, registry_updates, list_maps]
+    routes![
+        sync_registry,
+        registry_updates,
+        admin_install_map,
+        list_l4d2center_catalog,
+        list_maps
+    ]
 }
 
 #[cfg(test)]

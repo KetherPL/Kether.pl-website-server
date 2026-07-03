@@ -71,6 +71,8 @@ pub fn build_rocket() -> Rocket<Build> {
 		"http://localhost:80",   // Web Browser testing the paths and api
 		"https://kether.pl",
 		"http://kether.pl", // Unencrypted HTTP shouldn't really happen, but allow it just in case... Just don't break the website when it happens
+		"https://21370000.xyz",
+		"http://21370000.xyz",
 		"http://54.36.179.182", // L4D2 server (OVH) calling for sub through Rest in Pawn
 		"http://104.245.245.137", // L4D2 server (POLANDVPN/host4fun) calling for sub through Rest in Pawn
 	]);

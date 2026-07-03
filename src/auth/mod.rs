@@ -8,6 +8,7 @@ use crate::steam_bot::registry::ConfigHandle;
 use csrf::CsrfGuard;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use rocket::http::{Cookie, SameSite, Status};
+use rocket::http::uri::Host;
 use rocket::request::{FromRequest, Outcome, Request};
 use rocket::time::Duration;
 use rocket::State;
@@ -50,13 +51,25 @@ pub fn verify_session(token: &str, secret: &str) -> Option<i64> {
 	Some(token_data.claims.sub)
 }
 
+/// Whether the session cookie is sent in a cross-site context (frontend origin ≠ API origin).
+pub fn auth_cookie_is_cross_site(config: &Config, api_origin: &str) -> bool {
+	fn normalize_origin(url: &str) -> String {
+		url.trim()
+			.trim_end_matches('/')
+			.to_ascii_lowercase()
+	}
+
+	normalize_origin(&config.auth_frontend_url) != normalize_origin(api_origin)
+}
+
 /// Build the HttpOnly session cookie for a freshly minted JWT.
-pub fn build_session_cookie(token: &str, config: &Config) -> Cookie<'static> {
-	let cross_site = config.auth_frontend_url.starts_with("https://");
+pub fn build_session_cookie(token: &str, config: &Config, api_origin: &str) -> Cookie<'static> {
+	let cross_site = auth_cookie_is_cross_site(config, api_origin);
+	let secure = api_origin.starts_with("https://") || config.auth_frontend_url.starts_with("https://");
 	let mut cookie = Cookie::build((SESSION_COOKIE_NAME, token.to_string()))
 		.path("/")
 		.http_only(true)
-		.secure(cross_site)
+		.secure(secure)
 		.same_site(if cross_site {
 			SameSite::None
 		} else {
@@ -72,12 +85,13 @@ pub fn build_session_cookie(token: &str, config: &Config) -> Cookie<'static> {
 }
 
 /// Build a cookie that clears the session.
-pub fn clear_session_cookie(config: &Config) -> Cookie<'static> {
-	let cross_site = config.auth_frontend_url.starts_with("https://");
+pub fn clear_session_cookie(config: &Config, api_origin: &str) -> Cookie<'static> {
+	let cross_site = auth_cookie_is_cross_site(config, api_origin);
+	let secure = api_origin.starts_with("https://") || config.auth_frontend_url.starts_with("https://");
 	let mut cookie = Cookie::build((SESSION_COOKIE_NAME, String::new()))
 		.path("/")
 		.http_only(true)
-		.secure(cross_site)
+		.secure(secure)
 		.same_site(if cross_site {
 			SameSite::None
 		} else {
@@ -90,6 +104,16 @@ pub fn clear_session_cookie(config: &Config) -> Cookie<'static> {
 	}
 
 	cookie.into()
+}
+
+/// Derive the API origin from the incoming Host header (for cookie SameSite/Secure).
+pub fn api_origin_from_host(host: &Host<'_>) -> String {
+	let host_str = host.to_string();
+	if host_str.starts_with("localhost") || host_str.starts_with("127.0.0.1") {
+		format!("http://{host_str}")
+	} else {
+		format!("https://{host_str}")
+	}
 }
 
 fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<Config> {
@@ -164,5 +188,39 @@ impl<'r> FromRequest<'r> for AdminUser {
 			Outcome::Error(e) => Outcome::Error(e),
 			Outcome::Forward(f) => Outcome::Forward(f),
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn test_config(frontend_url: &str) -> Config {
+		Config::from_toml_str(&format!(
+			r#"
+frontend_admins = []
+[auth]
+frontend_url = "{frontend_url}"
+"#
+		))
+		.expect("config")
+	}
+
+	#[test]
+	fn auth_cookie_same_site_when_frontend_matches_api() {
+		let config = test_config("https://21370000.xyz");
+		assert!(!auth_cookie_is_cross_site(
+			&config,
+			"https://21370000.xyz"
+		));
+	}
+
+	#[test]
+	fn auth_cookie_cross_site_when_frontend_differs_from_api() {
+		let config = test_config("https://kether.pl");
+		assert!(auth_cookie_is_cross_site(
+			&config,
+			"https://21370000.xyz"
+		));
 	}
 }

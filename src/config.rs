@@ -339,6 +339,8 @@ fn effective_csrf_origins(frontend_url: &str, configured: &[String]) -> Vec<Stri
 	let mut origins: Vec<String> = if configured.is_empty() {
 		vec![
 			frontend_url.to_string(),
+			"https://kether.pl".to_string(),
+			"https://21370000.xyz".to_string(),
 			"http://localhost:3000".to_string(),
 			"http://localhost:80".to_string(),
 		]

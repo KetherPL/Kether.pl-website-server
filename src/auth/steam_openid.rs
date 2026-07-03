@@ -3,12 +3,13 @@
 use std::collections::HashMap;
 
 use crate::auth::{
-	build_session_cookie, clear_session_cookie, mint_session, AuthUser,
+	api_origin_from_host, build_session_cookie, clear_session_cookie, mint_session, verify_session,
 };
 use crate::auth::csrf::CsrfGuard;
 use crate::json_api::utils::ok_status;
 use crate::steam_bot::registry::ConfigHandle;
 use rocket::http::{CookieJar, Status};
+use rocket::http::uri::Host;
 use rocket::request::{FromRequest, Outcome, Request};
 use rocket::response::Redirect;
 use rocket::{get, options, post, routes, Route, State};
@@ -123,6 +124,7 @@ async fn verify_openid_response(params: &HashMap<String, String>) -> Result<(), 
 
 #[get("/steam/callback")]
 pub async fn steam_callback(
+	host: &Host<'_>,
 	openid: OpenIdParams,
 	cookies: &CookieJar<'_>,
 	config: &State<ConfigHandle>,
@@ -146,27 +148,34 @@ pub async fn steam_callback(
 		Status::InternalServerError
 	})?;
 
-	cookies.add(build_session_cookie(&token, &config));
+	let api_origin = api_origin_from_host(host);
+	cookies.add(build_session_cookie(&token, &config, &api_origin));
 	Ok(Redirect::to(config.auth_frontend_url.clone()))
 }
 
 #[get("/me")]
-pub fn auth_me(user: AuthUser, config: &State<ConfigHandle>) -> Json<MeResponse> {
+pub fn auth_me(cookies: &CookieJar<'_>, config: &State<ConfigHandle>) -> Json<Option<MeResponse>> {
 	let config = config_snapshot(config);
-	Json(MeResponse {
-		steamid: user.0.to_string(),
-		is_admin: config.is_admin(user.0),
-	})
+	let response = cookies
+		.get(crate::auth::SESSION_COOKIE_NAME)
+		.and_then(|cookie| verify_session(cookie.value(), &config.session_secret))
+		.map(|steam_id| MeResponse {
+			steamid: steam_id.to_string(),
+			is_admin: config.is_admin(steam_id),
+		});
+	Json(response)
 }
 
 #[post("/logout")]
 pub fn auth_logout(
+	host: &Host<'_>,
 	cookies: &CookieJar<'_>,
 	config: &State<ConfigHandle>,
 	_csrf: CsrfGuard,
 ) -> Status {
 	let config = config_snapshot(config);
-	cookies.remove(clear_session_cookie(&config));
+	let api_origin = api_origin_from_host(host);
+	cookies.remove(clear_session_cookie(&config, &api_origin));
 	ok_status()
 }
 

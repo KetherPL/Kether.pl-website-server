@@ -28,8 +28,8 @@ use admin_install::{
 
 use mapping::daemon_entry_to_website;
 use models::{
-    DaemonApiResponse, DaemonMapEntry, DaemonTypedApiResponse, L4d2CenterCatalogEntry,
-    MapsDataSource, MapsListResponse, SyncRequest, UpdatesResponse,
+    DaemonApiResponse, DaemonMapEntry, MapsDataSource, MapsListResponse, SyncRequest,
+    UpdatesResponse,
 };
 use registry_store::{load_registry, resolve_data_path, save_registry};
 use workshop_previews::{
@@ -158,41 +158,6 @@ impl MapsBridgeState {
             .json()
             .await
             .map_err(|e| format!("Failed to parse daemon response: {}", e))?;
-
-        if !body.success {
-            return Err(body
-                .error
-                .unwrap_or_else(|| "Daemon returned success=false".to_string()));
-        }
-
-        body.data.ok_or_else(|| "Daemon response missing data".to_string())
-    }
-
-    pub async fn fetch_l4d2center_catalog(&self) -> Result<Vec<L4d2CenterCatalogEntry>, String> {
-        if self.daemon_url.trim().is_empty() {
-            return Err("Daemon URL not configured".to_string());
-        }
-
-        let url = format!(
-            "{}/api/maps/l4d2center",
-            self.daemon_url.trim_end_matches('/')
-        );
-
-        let response = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| format!("Daemon request failed: {e}"))?;
-
-        if !response.status().is_success() {
-            return Err(format!("Daemon returned HTTP {}", response.status()));
-        }
-
-        let body: DaemonTypedApiResponse<Vec<L4d2CenterCatalogEntry>> = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse daemon response: {e}"))?;
 
         if !body.success {
             return Err(body
@@ -421,34 +386,6 @@ pub async fn admin_install_map(
     Ok(Json(response))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-pub struct L4d2CenterCatalogErrorResponse {
-    pub error: String,
-}
-
-#[get("/maps/l4d2center")]
-pub async fn list_l4d2center_catalog(
-    bridge: &State<MapsBridgeState>,
-) -> Result<Json<Vec<L4d2CenterCatalogEntry>>, (Status, Json<L4d2CenterCatalogErrorResponse>)> {
-    bridge
-        .fetch_l4d2center_catalog()
-        .await
-        .map(Json)
-        .map_err(|error| {
-            eprintln!("L4D2Center catalog fetch failed: {error}");
-            let status = if error.contains("not configured")
-                || error.contains("Daemon request failed")
-                || error.contains("Daemon returned HTTP")
-            {
-                Status::BadGateway
-            } else {
-                Status::InternalServerError
-            };
-            (status, Json(L4d2CenterCatalogErrorResponse { error }))
-        })
-}
-
 #[get("/maps")]
 pub async fn list_maps(
     bridge: &State<MapsBridgeState>,
@@ -471,13 +408,7 @@ pub async fn list_maps(
 }
 
 pub fn mount_maps_bridge_routes() -> Vec<Route> {
-    routes![
-        sync_registry,
-        registry_updates,
-        admin_install_map,
-        list_l4d2center_catalog,
-        list_maps
-    ]
+    routes![sync_registry, registry_updates, admin_install_map, list_maps]
 }
 
 #[cfg(test)]

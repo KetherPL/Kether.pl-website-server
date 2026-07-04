@@ -172,7 +172,13 @@ pub fn auth_exchange(
 ) -> Result<Json<ExchangeResponse>, Status> {
 	let config = config_snapshot(config);
 
-	let Some(steam_id) = exchange_store.consume_code(&body.code) else {
+	let code = body.code.trim();
+	if code.is_empty() {
+		return Err(Status::BadRequest);
+	}
+
+	let Some(steam_id) = exchange_store.consume_code(&code) else {
+		eprintln!("Auth exchange: invalid or expired code");
 		return Err(Status::BadRequest);
 	};
 

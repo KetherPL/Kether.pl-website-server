@@ -23,8 +23,10 @@ pub const SESSION_COOKIE_NAME: &str = "session";
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct Claims {
-	sub: i64,
+	sub: String,
 	exp: usize,
+	#[serde(default)]
+	adm: bool,
 }
 
 /// Mint a signed session JWT for the given Steam ID.
@@ -34,7 +36,11 @@ pub fn mint_session(steam_id: i64, config: &Config) -> Result<String, jsonwebtok
 		.map(|dt| dt.timestamp() as usize)
 		.unwrap_or(0);
 
-	let claims = Claims { sub: steam_id, exp };
+	let claims = Claims {
+		sub: steam_id.to_string(),
+		exp,
+		adm: config.is_admin(steam_id),
+	};
 	encode(
 		&Header::default(),
 		&claims,
@@ -68,7 +74,7 @@ pub fn verify_session(token: &str, secret: &str) -> Option<i64> {
 		&Validation::default(),
 	)
 	.ok()?;
-	Some(token_data.claims.sub)
+	token_data.claims.sub.parse().ok()
 }
 
 /// Whether the session cookie is sent in a cross-site context (frontend origin ≠ API origin).
@@ -222,10 +228,15 @@ impl<'r> FromRequest<'r> for AdminUser {
 mod tests {
 	use super::*;
 
-	fn test_config(frontend_url: &str) -> Config {
+	fn test_config(frontend_url: &str, admins: &[i64]) -> Config {
+		let admins_list = admins
+			.iter()
+			.map(|id| id.to_string())
+			.collect::<Vec<_>>()
+			.join(", ");
 		Config::from_toml_str(&format!(
 			r#"
-frontend_admins = []
+frontend_admins = [{admins_list}]
 [auth]
 frontend_url = "{frontend_url}"
 "#
@@ -235,7 +246,7 @@ frontend_url = "{frontend_url}"
 
 	#[test]
 	fn auth_cookie_same_site_when_frontend_matches_api() {
-		let config = test_config("https://21370000.xyz");
+		let config = test_config("https://21370000.xyz", &[]);
 		assert!(!auth_cookie_is_cross_site(
 			&config,
 			"https://21370000.xyz"
@@ -244,7 +255,7 @@ frontend_url = "{frontend_url}"
 
 	#[test]
 	fn auth_cookie_cross_site_when_frontend_differs_from_api() {
-		let config = test_config("https://kether.pl");
+		let config = test_config("https://kether.pl", &[]);
 		assert!(auth_cookie_is_cross_site(
 			&config,
 			"https://21370000.xyz"
@@ -268,11 +279,34 @@ frontend_url = "{frontend_url}"
 
 	#[test]
 	fn verify_session_round_trip() {
-		let config = test_config("https://kether.pl");
+		let config = test_config("https://kether.pl", &[]);
 		let token = mint_session(76561198000000000, &config).expect("mint");
 		assert_eq!(
 			verify_session(&token, &config.session_secret),
 			Some(76561198000000000)
 		);
+	}
+
+	#[test]
+	fn mint_session_includes_adm_claim() {
+		let admin_id = 76561198000000000_i64;
+		let user_id = 76561198000000001_i64;
+		let config = test_config("https://kether.pl", &[admin_id]);
+
+		let admin_token = mint_session(admin_id, &config).expect("mint admin");
+		let user_token = mint_session(user_id, &config).expect("mint user");
+
+		let decode_claims = |token: &str| -> Claims {
+			decode::<Claims>(
+				token,
+				&DecodingKey::from_secret(config.session_secret.as_bytes()),
+				&Validation::default(),
+			)
+			.expect("decode")
+			.claims
+		};
+
+		assert!(decode_claims(&admin_token).adm);
+		assert!(!decode_claims(&user_token).adm);
 	}
 }

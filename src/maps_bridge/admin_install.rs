@@ -3,6 +3,8 @@
 use reqwest::Client;
 use rocket::serde::{Deserialize, Serialize};
 
+use super::daemon_client::with_daemon_auth;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
 pub struct AdminInstallMapRequest {
@@ -174,12 +176,12 @@ struct DaemonApiEnvelope<T> {
 #[serde(crate = "rocket::serde")]
 struct DaemonMapEntryResponse {
     id: u64,
-    name: String,
 }
 
 pub async fn proxy_daemon_install_map(
     client: &Client,
     daemon_url: &str,
+    daemon_api_key: Option<&str>,
     target: &ResolvedInstallTarget,
     name: Option<String>,
 ) -> Result<u64, String> {
@@ -202,12 +204,13 @@ pub async fn proxy_daemon_install_map(
         }
     };
 
-    post_daemon_json(client, &url, &body).await
+    post_daemon_json(client, &url, daemon_api_key, &body).await
 }
 
 pub async fn proxy_daemon_l4d2center_install(
     client: &Client,
     daemon_url: &str,
+    daemon_api_key: Option<&str>,
     catalog_name: &str,
 ) -> Result<u64, String> {
     let base = daemon_url.trim_end_matches('/');
@@ -216,8 +219,7 @@ pub async fn proxy_daemon_l4d2center_install(
         name: catalog_name.to_string(),
     };
 
-    let response = client
-        .post(&url)
+    let response = with_daemon_auth(client.post(&url), daemon_api_key)
         .json(&body)
         .send()
         .await
@@ -254,10 +256,10 @@ pub async fn proxy_daemon_l4d2center_install(
 async fn post_daemon_json<T: Serialize>(
     client: &Client,
     url: &str,
+    daemon_api_key: Option<&str>,
     body: &T,
 ) -> Result<u64, String> {
-    let response = client
-        .post(url)
+    let response = with_daemon_auth(client.post(url), daemon_api_key)
         .json(body)
         .send()
         .await
@@ -307,6 +309,30 @@ pub fn validate_optional_install_name(name: &Option<String>) -> Result<Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn mock_daemon() -> (String, tokio::task::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock");
+        let address = listener.local_addr().expect("mock address");
+        let handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = vec![0_u8; 16 * 1024];
+            let read = stream.read(&mut request).await.expect("read request");
+            request.truncate(read);
+            let body = r#"{"success":true,"data":42,"error":null}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            String::from_utf8_lossy(&request).into_owned()
+        });
+        (format!("http://{address}"), handle)
+    }
 
     #[test]
     fn resolve_auto_workshop_id() {
@@ -365,5 +391,42 @@ mod tests {
     fn resolve_invalid_mode() {
         let err = resolve_install_target("unknown", "123").unwrap_err();
         assert!(matches!(err, ResolveInstallError::InvalidMode(_)));
+    }
+
+    #[tokio::test]
+    async fn install_sends_configured_bearer_token() {
+        let (url, request) = mock_daemon().await;
+        let target = ResolvedInstallTarget::Workshop { workshop_id: 123 };
+
+        proxy_daemon_install_map(
+            &Client::new(),
+            &url,
+            Some("daemon-secret"),
+            &target,
+            None,
+        )
+        .await
+        .expect("install");
+
+        assert!(request
+            .await
+            .expect("request task")
+            .contains("authorization: Bearer daemon-secret"));
+    }
+
+    #[tokio::test]
+    async fn install_omits_bearer_token_when_unconfigured() {
+        let (url, request) = mock_daemon().await;
+        let target = ResolvedInstallTarget::Workshop { workshop_id: 123 };
+
+        proxy_daemon_install_map(&Client::new(), &url, None, &target, None)
+            .await
+            .expect("install");
+
+        assert!(!request
+            .await
+            .expect("request task")
+            .to_ascii_lowercase()
+            .contains("authorization:"));
     }
 }

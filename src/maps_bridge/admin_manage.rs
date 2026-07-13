@@ -3,6 +3,7 @@
 use reqwest::Client;
 use rocket::serde::{Deserialize, Serialize};
 
+use super::daemon_client::with_daemon_auth;
 use super::models::DaemonMapEntry;
 
 #[derive(Debug, Clone)]
@@ -56,14 +57,14 @@ struct L4d2CenterUpdateReport {
 pub async fn proxy_daemon_get_map(
     client: &Client,
     daemon_url: &str,
+    daemon_api_key: Option<&str>,
     id: u64,
 ) -> Result<DaemonMapEntry, String> {
     let url = format!(
         "{}/api/maps/{id}",
         daemon_url.trim_end_matches('/')
     );
-    let response = client
-        .get(&url)
+    let response = with_daemon_auth(client.get(&url), daemon_api_key)
         .send()
         .await
         .map_err(|e| format!("Daemon request failed: {e}"))?;
@@ -73,14 +74,14 @@ pub async fn proxy_daemon_get_map(
 pub async fn proxy_daemon_uninstall_map(
     client: &Client,
     daemon_url: &str,
+    daemon_api_key: Option<&str>,
     id: u64,
 ) -> Result<(), String> {
     let url = format!(
         "{}/api/maps/uninstall/{id}",
         daemon_url.trim_end_matches('/')
     );
-    let response = client
-        .post(&url)
+    let response = with_daemon_auth(client.post(&url), daemon_api_key)
         .send()
         .await
         .map_err(|e| format!("Daemon request failed: {e}"))?;
@@ -90,6 +91,7 @@ pub async fn proxy_daemon_uninstall_map(
 pub async fn proxy_daemon_workshop_update(
     client: &Client,
     daemon_url: &str,
+    daemon_api_key: Option<&str>,
     id: u64,
 ) -> Result<MapUpdateOutcome, String> {
     let url = format!(
@@ -97,7 +99,7 @@ pub async fn proxy_daemon_workshop_update(
         daemon_url.trim_end_matches('/')
     );
     let report: WorkshopUpdateReport =
-        post_update_request(client, &url, id).await?;
+        post_update_request(client, &url, daemon_api_key, id).await?;
     Ok(classify_update_report(
         id,
         report.updated,
@@ -111,6 +113,7 @@ pub async fn proxy_daemon_workshop_update(
 pub async fn proxy_daemon_l4d2center_update(
     client: &Client,
     daemon_url: &str,
+    daemon_api_key: Option<&str>,
     id: u64,
 ) -> Result<MapUpdateOutcome, String> {
     let url = format!(
@@ -118,7 +121,7 @@ pub async fn proxy_daemon_l4d2center_update(
         daemon_url.trim_end_matches('/')
     );
     let report: L4d2CenterUpdateReport =
-        post_update_request(client, &url, id).await?;
+        post_update_request(client, &url, daemon_api_key, id).await?;
     Ok(classify_update_report(
         id,
         report.updated,
@@ -132,10 +135,10 @@ pub async fn proxy_daemon_l4d2center_update(
 async fn post_update_request<T: for<'de> Deserialize<'de>>(
     client: &Client,
     url: &str,
+    daemon_api_key: Option<&str>,
     id: u64,
 ) -> Result<T, String> {
-    let response = client
-        .post(url)
+    let response = with_daemon_auth(client.post(url), daemon_api_key)
         .json(&DaemonUpdateRequest {
             map_id: Some(id),
             force: false,
@@ -277,12 +280,14 @@ mod tests {
         );
         let (url, request) = mock_daemon("200 OK", body).await;
 
-        let map = proxy_daemon_get_map(&Client::new(), &url, 42)
+        let map = proxy_daemon_get_map(&Client::new(), &url, None, 42)
             .await
             .expect("map detail");
         assert_eq!(map.id, 42);
         assert_eq!(map.installed_path, "workshop/test.vpk");
-        assert!(request.await.expect("request task").starts_with("GET /api/maps/42 "));
+        let request = request.await.expect("request task");
+        assert!(request.starts_with("GET /api/maps/42 "));
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
     }
 
     #[tokio::test]
@@ -293,7 +298,7 @@ mod tests {
         )
         .await;
 
-        proxy_daemon_uninstall_map(&Client::new(), &url, 7)
+        proxy_daemon_uninstall_map(&Client::new(), &url, None, 7)
             .await
             .expect("uninstall");
         assert!(request
@@ -310,7 +315,7 @@ mod tests {
         );
         let (url, request) = mock_daemon("200 OK", body).await;
 
-        let outcome = proxy_daemon_workshop_update(&Client::new(), &url, 9)
+        let outcome = proxy_daemon_workshop_update(&Client::new(), &url, None, 9)
             .await
             .expect("update");
         assert!(matches!(outcome, MapUpdateOutcome::Updated(entry) if entry.id == 9));
@@ -325,10 +330,26 @@ mod tests {
         let body = r#"{"success":true,"data":{"updated":[],"available":[],"skipped":1,"failed":[],"not_l4d2center":0},"error":null}"#;
         let (url, _) = mock_daemon("200 OK", body.to_string()).await;
 
-        let outcome = proxy_daemon_l4d2center_update(&Client::new(), &url, 11)
+        let outcome = proxy_daemon_l4d2center_update(&Client::new(), &url, None, 11)
             .await
             .expect("update check");
         assert!(matches!(outcome, MapUpdateOutcome::UpToDate));
+    }
+
+    #[tokio::test]
+    async fn get_map_sends_configured_bearer_token() {
+        let body = format!(
+            r#"{{"success":true,"data":{},"error":null}}"#,
+            map_json(42)
+        );
+        let (url, request) = mock_daemon("200 OK", body).await;
+
+        proxy_daemon_get_map(&Client::new(), &url, Some("daemon-secret"), 42)
+            .await
+            .expect("map detail");
+
+        let request = request.await.expect("request task");
+        assert!(request.contains("authorization: Bearer daemon-secret"));
     }
 }
 

@@ -2,6 +2,7 @@
 
 mod admin_install;
 mod admin_manage;
+mod daemon_client;
 mod mapping;
 mod models;
 mod registry_store;
@@ -30,6 +31,7 @@ use admin_manage::{
     proxy_daemon_get_map, proxy_daemon_l4d2center_update, proxy_daemon_uninstall_map,
     proxy_daemon_workshop_update, MapUpdateOutcome,
 };
+use daemon_client::with_daemon_auth;
 
 use mapping::daemon_entry_to_website;
 use models::{
@@ -46,6 +48,7 @@ use workshop_previews::{
 pub struct MapsBridgeState {
     pub registry_path: PathBuf,
     pub daemon_url: String,
+    pub daemon_api_key: Option<String>,
     pub stale_after_secs: u64,
     http_client: Client,
     install_http_client: Client,
@@ -81,6 +84,8 @@ impl MapsBridgeState {
                 "maps_registry.json",
             ),
             daemon_url: config.server_daemon_url.clone(),
+            daemon_api_key: (!config.server_daemon_api_key.trim().is_empty())
+                .then(|| config.server_daemon_api_key.trim().to_string()),
             stale_after_secs: config.server_daemon_stale_after_secs,
             http_client,
             install_http_client,
@@ -149,9 +154,10 @@ impl MapsBridgeState {
             self.daemon_url.trim_end_matches('/')
         );
 
-        let response = self
-            .http_client
-            .get(&url)
+        let response = with_daemon_auth(
+            self.http_client.get(&url),
+            self.daemon_api_key.as_deref(),
+        )
             .send()
             .await
             .map_err(|e| format!("Daemon request failed: {}", e))?;
@@ -198,6 +204,7 @@ impl MapsBridgeState {
                 proxy_daemon_l4d2center_install(
                     &self.install_http_client,
                     &self.daemon_url,
+                    self.daemon_api_key.as_deref(),
                     catalog_name,
                 )
                 .await?
@@ -206,6 +213,7 @@ impl MapsBridgeState {
                 proxy_daemon_install_map(
                     &self.install_http_client,
                     &self.daemon_url,
+                    self.daemon_api_key.as_deref(),
                     &target,
                     name,
                 )
@@ -223,7 +231,12 @@ impl MapsBridgeState {
         if self.daemon_url.trim().is_empty() {
             return Err("Daemon URL not configured".to_string());
         }
-        proxy_daemon_get_map(&self.http_client, &self.daemon_url, id)
+        proxy_daemon_get_map(
+            &self.http_client,
+            &self.daemon_url,
+            self.daemon_api_key.as_deref(),
+            id,
+        )
             .await
             .map(Into::into)
     }
@@ -232,7 +245,13 @@ impl MapsBridgeState {
         if self.daemon_url.trim().is_empty() {
             return Err("Daemon URL not configured".to_string());
         }
-        proxy_daemon_uninstall_map(&self.install_http_client, &self.daemon_url, id).await
+        proxy_daemon_uninstall_map(
+            &self.install_http_client,
+            &self.daemon_url,
+            self.daemon_api_key.as_deref(),
+            id,
+        )
+        .await
     }
 
     pub async fn admin_check_update_map(
@@ -243,15 +262,31 @@ impl MapsBridgeState {
             return Err("Daemon URL not configured".to_string());
         }
 
-        let current = proxy_daemon_get_map(&self.http_client, &self.daemon_url, id).await?;
+        let current = proxy_daemon_get_map(
+            &self.http_client,
+            &self.daemon_url,
+            self.daemon_api_key.as_deref(),
+            id,
+        )
+        .await?;
         let outcome = match current.source_kind {
             DaemonSourceKind::Workshop => {
-                proxy_daemon_workshop_update(&self.install_http_client, &self.daemon_url, id)
-                    .await?
+                proxy_daemon_workshop_update(
+                    &self.install_http_client,
+                    &self.daemon_url,
+                    self.daemon_api_key.as_deref(),
+                    id,
+                )
+                .await?
             }
             DaemonSourceKind::L4d2Center => {
-                proxy_daemon_l4d2center_update(&self.install_http_client, &self.daemon_url, id)
-                    .await?
+                proxy_daemon_l4d2center_update(
+                    &self.install_http_client,
+                    &self.daemon_url,
+                    self.daemon_api_key.as_deref(),
+                    id,
+                )
+                .await?
             }
             DaemonSourceKind::SirPlease | DaemonSourceKind::Other => {
                 return Ok(AdminUpdateCheckResponse {

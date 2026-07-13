@@ -61,6 +61,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
     *   Receives a 1:1 copy of the daemon map registry via `POST /api/registry/sync` (Bearer token).
     *   Serves the public installed-maps list at `GET /api/maps` from the synced registry only (empty when never synced; stale cached list when daemon is unreachable). Static fallback lives on the frontend.
     *   Configure in `[server_daemon]`; use the same secret for `sync_api_key` and the daemon's `backend_api_key`.
+    *   Admin install/manage calls use `daemon_api_key`, which must match the daemon's `local_api_key`.
     *   Point the daemon at `backend_api_url = "http://127.0.0.1:3001/api"` (website-server port).
 *   **FastDL Server:**
     *   **HTTP File Server:** Serves static files for Source/GoldSrc games (maps, models, sounds, MOTDs) via HTTP.
@@ -227,9 +228,17 @@ ignore_muted_commands = true
 [server_daemon]
 registry_path = "maps_registry.json"
 sync_api_key = "shared-secret-with-daemon"
+daemon_api_key = "shared-inbound-daemon-secret"
 daemon_url = "http://127.0.0.1:8080"
 stale_after_secs = 600
 ```
+
+When website-server and KetherServerDaemon run on separate hosts, set
+`daemon_url` to the daemon's reachable HTTP address, configure the same secret
+as the daemon's `local_api_key`, and bind the daemon to a reachable interface.
+The daemon API is plain HTTP, so firewall its port to the website-server's source
+IP only. Prefer a private VPN/tunnel or TLS reverse proxy over an untrusted
+network.
 
 **Features:**
 - ✅ Auto-generated on first run with helpful comments

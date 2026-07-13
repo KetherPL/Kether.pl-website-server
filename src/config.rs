@@ -280,9 +280,6 @@ struct ServerDaemonConfig {
 	#[serde(default)]
 	sync_api_key: String,
 
-	#[serde(default)]
-	daemon_api_key: String,
-
 	#[serde(default = "default_server_daemon_url")]
 	daemon_url: String,
 
@@ -295,7 +292,6 @@ impl Default for ServerDaemonConfig {
 		ServerDaemonConfig {
 			registry_path: String::new(),
 			sync_api_key: String::new(),
-			daemon_api_key: String::new(),
 			daemon_url: default_server_daemon_url(),
 			stale_after_secs: default_stale_after_secs(),
 		}
@@ -478,7 +474,6 @@ pub struct Config {
 	pub steam_rest_cache_ttl_secs: u64,
 	pub server_daemon_registry_path: String,
 	pub server_daemon_sync_api_key: String,
-	pub server_daemon_api_key: String,
 	pub server_daemon_url: String,
 	pub server_daemon_stale_after_secs: u64,
 }
@@ -593,7 +588,6 @@ impl Config {
 			steam_rest_cache_ttl_secs: config_file.steam_rest.response_cache_ttl_secs,
 			server_daemon_registry_path: config_file.server_daemon.registry_path,
 			server_daemon_sync_api_key: config_file.server_daemon.sync_api_key,
-			server_daemon_api_key: config_file.server_daemon.daemon_api_key,
 			server_daemon_url: config_file.server_daemon.daemon_url,
 			server_daemon_stale_after_secs: config_file.server_daemon.stale_after_secs,
 		}
@@ -739,9 +733,6 @@ impl Config {
 		if self.server_daemon_sync_api_key != new.server_daemon_sync_api_key {
 			change.requires_restart.push("server_daemon.sync_api_key");
 		}
-		if self.server_daemon_api_key != new.server_daemon_api_key {
-			change.requires_restart.push("server_daemon.daemon_api_key");
-		}
 		if self.server_daemon_url != new.server_daemon_url {
 			change.requires_restart.push("server_daemon.daemon_url");
 		}
@@ -863,8 +854,9 @@ response_cache_ttl_secs = 300
 # workshop_previews.json is auto-created beside registry_path for Steam cover cache.
 [server_daemon]
 registry_path = "maps_registry.json"
+# Shared bearer token for daemon push-sync and website-to-daemon API requests.
+# Must match the daemon's backend_api_key.
 sync_api_key = ""
-daemon_api_key = ""
 daemon_url = "http://127.0.0.1:8080"
 stale_after_secs = 600
 "#.to_string()
@@ -1215,29 +1207,12 @@ ignore_muted_commands = false
 		new.server_ip = "10.0.0.1".to_string();
 		new.steam_password = "updated".to_string();
 		new.plan_mention_user = false;
-		new.server_daemon_api_key = "rotated-daemon-key".to_string();
 
 		let change = old.diff(&new);
 		assert!(!change.unchanged);
 		assert!(change.live_applied.contains(&"server.ip"));
 		assert!(change.live_applied.contains(&"steam.chat.plan_mention_user"));
 		assert!(change.requires_restart.contains(&"steam.bot.password"));
-		assert!(change
-			.requires_restart
-			.contains(&"server_daemon.daemon_api_key"));
-	}
-
-	#[test]
-	fn from_toml_str_parses_daemon_api_key() {
-		let parsed = Config::from_toml_str(
-			r#"
-frontend_admins = []
-[server_daemon]
-daemon_api_key = "daemon-secret"
-"#,
-		)
-		.expect("config");
-		assert_eq!(parsed.server_daemon_api_key, "daemon-secret");
 	}
 
 	#[test]

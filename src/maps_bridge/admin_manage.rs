@@ -57,14 +57,14 @@ struct L4d2CenterUpdateReport {
 pub async fn proxy_daemon_get_map(
     client: &Client,
     daemon_url: &str,
-    daemon_api_key: Option<&str>,
+    sync_api_key: Option<&str>,
     id: u64,
 ) -> Result<DaemonMapEntry, String> {
     let url = format!(
         "{}/api/maps/{id}",
         daemon_url.trim_end_matches('/')
     );
-    let response = with_daemon_auth(client.get(&url), daemon_api_key)
+    let response = with_daemon_auth(client.get(&url), sync_api_key)
         .send()
         .await
         .map_err(|e| format!("Daemon request failed: {e}"))?;
@@ -74,14 +74,14 @@ pub async fn proxy_daemon_get_map(
 pub async fn proxy_daemon_uninstall_map(
     client: &Client,
     daemon_url: &str,
-    daemon_api_key: Option<&str>,
+    sync_api_key: Option<&str>,
     id: u64,
 ) -> Result<(), String> {
     let url = format!(
         "{}/api/maps/uninstall/{id}",
         daemon_url.trim_end_matches('/')
     );
-    let response = with_daemon_auth(client.post(&url), daemon_api_key)
+    let response = with_daemon_auth(client.post(&url), sync_api_key)
         .send()
         .await
         .map_err(|e| format!("Daemon request failed: {e}"))?;
@@ -91,7 +91,7 @@ pub async fn proxy_daemon_uninstall_map(
 pub async fn proxy_daemon_workshop_update(
     client: &Client,
     daemon_url: &str,
-    daemon_api_key: Option<&str>,
+    sync_api_key: Option<&str>,
     id: u64,
 ) -> Result<MapUpdateOutcome, String> {
     let url = format!(
@@ -99,7 +99,7 @@ pub async fn proxy_daemon_workshop_update(
         daemon_url.trim_end_matches('/')
     );
     let report: WorkshopUpdateReport =
-        post_update_request(client, &url, daemon_api_key, id).await?;
+        post_update_request(client, &url, sync_api_key, id).await?;
     Ok(classify_update_report(
         id,
         report.updated,
@@ -113,7 +113,7 @@ pub async fn proxy_daemon_workshop_update(
 pub async fn proxy_daemon_l4d2center_update(
     client: &Client,
     daemon_url: &str,
-    daemon_api_key: Option<&str>,
+    sync_api_key: Option<&str>,
     id: u64,
 ) -> Result<MapUpdateOutcome, String> {
     let url = format!(
@@ -121,7 +121,7 @@ pub async fn proxy_daemon_l4d2center_update(
         daemon_url.trim_end_matches('/')
     );
     let report: L4d2CenterUpdateReport =
-        post_update_request(client, &url, daemon_api_key, id).await?;
+        post_update_request(client, &url, sync_api_key, id).await?;
     Ok(classify_update_report(
         id,
         report.updated,
@@ -135,10 +135,10 @@ pub async fn proxy_daemon_l4d2center_update(
 async fn post_update_request<T: for<'de> Deserialize<'de>>(
     client: &Client,
     url: &str,
-    daemon_api_key: Option<&str>,
+    sync_api_key: Option<&str>,
     id: u64,
 ) -> Result<T, String> {
-    let response = with_daemon_auth(client.post(url), daemon_api_key)
+    let response = with_daemon_auth(client.post(url), sync_api_key)
         .json(&DaemonUpdateRequest {
             map_id: Some(id),
             force: false,
@@ -344,12 +344,12 @@ mod tests {
         );
         let (url, request) = mock_daemon("200 OK", body).await;
 
-        proxy_daemon_get_map(&Client::new(), &url, Some("daemon-secret"), 42)
+        proxy_daemon_get_map(&Client::new(), &url, Some("shared-sync-secret"), 42)
             .await
             .expect("map detail");
 
         let request = request.await.expect("request task");
-        assert!(request.contains("authorization: Bearer daemon-secret"));
+        assert!(request.contains("authorization: Bearer shared-sync-secret"));
     }
 }
 

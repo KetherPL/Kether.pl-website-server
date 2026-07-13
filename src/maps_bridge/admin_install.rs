@@ -181,7 +181,7 @@ struct DaemonMapEntryResponse {
 pub async fn proxy_daemon_install_map(
     client: &Client,
     daemon_url: &str,
-    daemon_api_key: Option<&str>,
+    sync_api_key: Option<&str>,
     target: &ResolvedInstallTarget,
     name: Option<String>,
 ) -> Result<u64, String> {
@@ -204,13 +204,13 @@ pub async fn proxy_daemon_install_map(
         }
     };
 
-    post_daemon_json(client, &url, daemon_api_key, &body).await
+    post_daemon_json(client, &url, sync_api_key, &body).await
 }
 
 pub async fn proxy_daemon_l4d2center_install(
     client: &Client,
     daemon_url: &str,
-    daemon_api_key: Option<&str>,
+    sync_api_key: Option<&str>,
     catalog_name: &str,
 ) -> Result<u64, String> {
     let base = daemon_url.trim_end_matches('/');
@@ -219,7 +219,7 @@ pub async fn proxy_daemon_l4d2center_install(
         name: catalog_name.to_string(),
     };
 
-    let response = with_daemon_auth(client.post(&url), daemon_api_key)
+    let response = with_daemon_auth(client.post(&url), sync_api_key)
         .json(&body)
         .send()
         .await
@@ -256,10 +256,10 @@ pub async fn proxy_daemon_l4d2center_install(
 async fn post_daemon_json<T: Serialize>(
     client: &Client,
     url: &str,
-    daemon_api_key: Option<&str>,
+    sync_api_key: Option<&str>,
     body: &T,
 ) -> Result<u64, String> {
-    let response = with_daemon_auth(client.post(url), daemon_api_key)
+    let response = with_daemon_auth(client.post(url), sync_api_key)
         .json(body)
         .send()
         .await
@@ -401,7 +401,7 @@ mod tests {
         proxy_daemon_install_map(
             &Client::new(),
             &url,
-            Some("daemon-secret"),
+            Some("shared-sync-secret"),
             &target,
             None,
         )
@@ -411,7 +411,7 @@ mod tests {
         assert!(request
             .await
             .expect("request task")
-            .contains("authorization: Bearer daemon-secret"));
+            .contains("authorization: Bearer shared-sync-secret"));
     }
 
     #[tokio::test]

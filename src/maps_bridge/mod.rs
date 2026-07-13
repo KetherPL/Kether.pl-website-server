@@ -48,7 +48,7 @@ use workshop_previews::{
 pub struct MapsBridgeState {
     pub registry_path: PathBuf,
     pub daemon_url: String,
-    pub daemon_api_key: Option<String>,
+    pub sync_api_key: Option<String>,
     pub stale_after_secs: u64,
     http_client: Client,
     install_http_client: Client,
@@ -84,8 +84,8 @@ impl MapsBridgeState {
                 "maps_registry.json",
             ),
             daemon_url: config.server_daemon_url.clone(),
-            daemon_api_key: (!config.server_daemon_api_key.trim().is_empty())
-                .then(|| config.server_daemon_api_key.trim().to_string()),
+            sync_api_key: (!config.server_daemon_sync_api_key.trim().is_empty())
+                .then(|| config.server_daemon_sync_api_key.trim().to_string()),
             stale_after_secs: config.server_daemon_stale_after_secs,
             http_client,
             install_http_client,
@@ -156,7 +156,7 @@ impl MapsBridgeState {
 
         let response = with_daemon_auth(
             self.http_client.get(&url),
-            self.daemon_api_key.as_deref(),
+            self.sync_api_key.as_deref(),
         )
             .send()
             .await
@@ -204,7 +204,7 @@ impl MapsBridgeState {
                 proxy_daemon_l4d2center_install(
                     &self.install_http_client,
                     &self.daemon_url,
-                    self.daemon_api_key.as_deref(),
+                    self.sync_api_key.as_deref(),
                     catalog_name,
                 )
                 .await?
@@ -213,7 +213,7 @@ impl MapsBridgeState {
                 proxy_daemon_install_map(
                     &self.install_http_client,
                     &self.daemon_url,
-                    self.daemon_api_key.as_deref(),
+                    self.sync_api_key.as_deref(),
                     &target,
                     name,
                 )
@@ -234,7 +234,7 @@ impl MapsBridgeState {
         proxy_daemon_get_map(
             &self.http_client,
             &self.daemon_url,
-            self.daemon_api_key.as_deref(),
+            self.sync_api_key.as_deref(),
             id,
         )
             .await
@@ -248,7 +248,7 @@ impl MapsBridgeState {
         proxy_daemon_uninstall_map(
             &self.install_http_client,
             &self.daemon_url,
-            self.daemon_api_key.as_deref(),
+            self.sync_api_key.as_deref(),
             id,
         )
         .await
@@ -265,7 +265,7 @@ impl MapsBridgeState {
         let current = proxy_daemon_get_map(
             &self.http_client,
             &self.daemon_url,
-            self.daemon_api_key.as_deref(),
+            self.sync_api_key.as_deref(),
             id,
         )
         .await?;
@@ -274,7 +274,7 @@ impl MapsBridgeState {
                 proxy_daemon_workshop_update(
                     &self.install_http_client,
                     &self.daemon_url,
-                    self.daemon_api_key.as_deref(),
+                    self.sync_api_key.as_deref(),
                     id,
                 )
                 .await?
@@ -283,7 +283,7 @@ impl MapsBridgeState {
                 proxy_daemon_l4d2center_update(
                     &self.install_http_client,
                     &self.daemon_url,
-                    self.daemon_api_key.as_deref(),
+                    self.sync_api_key.as_deref(),
                     id,
                 )
                 .await?
@@ -620,6 +620,7 @@ sync_api_key = "test-secret"
         let config = test_config();
         let bridge = MapsBridgeState::from_config(&config, dir.path().to_path_buf()).expect("bridge");
 
+        assert_eq!(bridge.sync_api_key.as_deref(), Some("test-secret"));
         assert!(bridge.verify_sync_token(
             &config,
             Some("Bearer test-secret")

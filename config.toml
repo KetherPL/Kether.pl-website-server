@@ -106,10 +106,10 @@ requests_per_minute_per_ip = 30
 response_cache_ttl_secs = 300
 
 # KetherServerDaemon registry bridge (maps list sync)
-# Set sync_api_key to a long random string; use the same value as daemon backend_api_key
+# Shared bearer token for daemon push-sync and website-to-daemon API requests.
+# Set it to a long random string matching the daemon backend_api_key.
 [server_daemon]
 registry_path = "maps_registry.json"
 sync_api_key = ""
-daemon_api_key = ""
 daemon_url = "http://127.0.0.1:8080"
 stale_after_secs = 600

@@ -60,6 +60,7 @@ pub struct UpdatesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
 pub struct WebsiteMapEntry {
+    pub id: u64,
     pub mapName: String,
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,6 +84,61 @@ pub struct MapsListResponse {
     pub maps: Vec<WebsiteMapEntry>,
     pub stale: bool,
     pub source: MapsDataSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AdminMapDetailResponse {
+    pub id: u64,
+    pub name: String,
+    pub installed_path: String,
+    pub source_kind: DaemonSourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workshop_id: Option<u64>,
+    pub installed_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workshop_updated_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum_kind: Option<String>,
+}
+
+impl From<DaemonMapEntry> for AdminMapDetailResponse {
+    fn from(entry: DaemonMapEntry) -> Self {
+        Self {
+            id: entry.id,
+            name: entry.name,
+            installed_path: entry.installed_path,
+            source_kind: entry.source_kind,
+            workshop_id: entry.workshop_id,
+            installed_at: entry.installed_at,
+            workshop_updated_at: entry.workshop_updated_at,
+            version: entry.version,
+            checksum: entry.checksum,
+            checksum_kind: entry.checksum_kind,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde", rename_all = "snake_case")]
+pub enum UpdateStatus {
+    Updated,
+    UpToDate,
+    Unsupported,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AdminUpdateCheckResponse {
+    pub status: UpdateStatus,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map: Option<AdminMapDetailResponse>,
 }
 
 /// Daemon `GET /api/maps` envelope.

@@ -15,6 +15,7 @@ pub fn daemon_entry_to_website(
     let preview_url = preview_url_for_entry(entry, previews);
 
     WebsiteMapEntry {
+        id: entry.id,
         mapName: entry.name.clone(),
         source,
         downloadUrl: download_url,

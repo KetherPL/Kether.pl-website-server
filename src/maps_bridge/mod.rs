@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 mod admin_install;
+mod admin_manage;
 mod mapping;
 mod models;
 mod registry_store;
@@ -25,10 +26,15 @@ use admin_install::{
     resolved_mode_label, validate_optional_install_name, AdminInstallMapRequest,
     AdminInstallMapResponse, ResolvedInstallTarget,
 };
+use admin_manage::{
+    proxy_daemon_get_map, proxy_daemon_l4d2center_update, proxy_daemon_uninstall_map,
+    proxy_daemon_workshop_update, MapUpdateOutcome,
+};
 
 use mapping::daemon_entry_to_website;
 use models::{
-    DaemonApiResponse, DaemonMapEntry, MapsDataSource, MapsListResponse, SyncRequest,
+    AdminMapDetailResponse, AdminUpdateCheckResponse, DaemonApiResponse, DaemonMapEntry,
+    DaemonSourceKind, MapsDataSource, MapsListResponse, SyncRequest, UpdateStatus,
     UpdatesResponse,
 };
 use registry_store::{load_registry, resolve_data_path, save_registry};
@@ -213,6 +219,68 @@ impl MapsBridgeState {
         })
     }
 
+    pub async fn admin_map_detail(&self, id: u64) -> Result<AdminMapDetailResponse, String> {
+        if self.daemon_url.trim().is_empty() {
+            return Err("Daemon URL not configured".to_string());
+        }
+        proxy_daemon_get_map(&self.http_client, &self.daemon_url, id)
+            .await
+            .map(Into::into)
+    }
+
+    pub async fn admin_uninstall_map(&self, id: u64) -> Result<(), String> {
+        if self.daemon_url.trim().is_empty() {
+            return Err("Daemon URL not configured".to_string());
+        }
+        proxy_daemon_uninstall_map(&self.install_http_client, &self.daemon_url, id).await
+    }
+
+    pub async fn admin_check_update_map(
+        &self,
+        id: u64,
+    ) -> Result<AdminUpdateCheckResponse, String> {
+        if self.daemon_url.trim().is_empty() {
+            return Err("Daemon URL not configured".to_string());
+        }
+
+        let current = proxy_daemon_get_map(&self.http_client, &self.daemon_url, id).await?;
+        let outcome = match current.source_kind {
+            DaemonSourceKind::Workshop => {
+                proxy_daemon_workshop_update(&self.install_http_client, &self.daemon_url, id)
+                    .await?
+            }
+            DaemonSourceKind::L4d2Center => {
+                proxy_daemon_l4d2center_update(&self.install_http_client, &self.daemon_url, id)
+                    .await?
+            }
+            DaemonSourceKind::SirPlease | DaemonSourceKind::Other => {
+                return Ok(AdminUpdateCheckResponse {
+                    status: UpdateStatus::Unsupported,
+                    message: "Updates are not supported for this addon source".to_string(),
+                    map: Some(current.into()),
+                });
+            }
+        };
+
+        Ok(match outcome {
+            MapUpdateOutcome::Updated(entry) => AdminUpdateCheckResponse {
+                status: UpdateStatus::Updated,
+                message: "Addon was updated successfully".to_string(),
+                map: Some(entry.into()),
+            },
+            MapUpdateOutcome::UpToDate => AdminUpdateCheckResponse {
+                status: UpdateStatus::UpToDate,
+                message: "Addon is already up to date".to_string(),
+                map: Some(current.into()),
+            },
+            MapUpdateOutcome::Failed(error) => AdminUpdateCheckResponse {
+                status: UpdateStatus::Failed,
+                message: error,
+                map: Some(current.into()),
+            },
+        })
+    }
+
     fn empty_stale_response() -> MapsListResponse {
         MapsListResponse {
             maps: Vec::new(),
@@ -386,6 +454,81 @@ pub async fn admin_install_map(
     Ok(Json(response))
 }
 
+fn admin_proxy_error(error: String) -> (Status, Json<AdminInstallErrorResponse>) {
+    let status = if error.to_lowercase().contains("not found") {
+        Status::NotFound
+    } else if error.contains("not configured")
+        || error.contains("Daemon request failed")
+        || error.contains("Daemon returned HTTP")
+    {
+        Status::BadGateway
+    } else {
+        Status::InternalServerError
+    };
+    (status, Json(AdminInstallErrorResponse { error }))
+}
+
+fn steam_api_key(config_handle: &State<ConfigHandle>) -> Option<String> {
+    config_handle
+        .read()
+        .ok()
+        .map(|config| config.steam_web_api_key.clone())
+}
+
+#[get("/maps/admin/<id>")]
+pub async fn get_admin_map_detail(
+    _admin: AdminUser,
+    bridge: &State<MapsBridgeState>,
+    id: u64,
+) -> Result<Json<AdminMapDetailResponse>, (Status, Json<AdminInstallErrorResponse>)> {
+    bridge
+        .admin_map_detail(id)
+        .await
+        .map(Json)
+        .map_err(admin_proxy_error)
+}
+
+#[post("/maps/admin/<id>/uninstall")]
+pub async fn admin_uninstall_map(
+    _admin: AdminUser,
+    bridge: &State<MapsBridgeState>,
+    config_handle: &State<ConfigHandle>,
+    id: u64,
+) -> Result<Status, (Status, Json<AdminInstallErrorResponse>)> {
+    bridge
+        .admin_uninstall_map(id)
+        .await
+        .map_err(admin_proxy_error)?;
+
+    let api_key = steam_api_key(config_handle);
+    if let Err(error) = bridge.refresh_registry_from_daemon(api_key.as_deref()).await {
+        eprintln!("Registry refresh after uninstall failed (non-fatal): {}", error);
+    }
+    Ok(Status::Ok)
+}
+
+#[post("/maps/admin/<id>/check-update")]
+pub async fn admin_check_update_map(
+    _admin: AdminUser,
+    bridge: &State<MapsBridgeState>,
+    config_handle: &State<ConfigHandle>,
+    id: u64,
+) -> Result<Json<AdminUpdateCheckResponse>, (Status, Json<AdminInstallErrorResponse>)> {
+    let response = bridge
+        .admin_check_update_map(id)
+        .await
+        .map_err(admin_proxy_error)?;
+
+    if response.status == UpdateStatus::Updated {
+        let api_key = steam_api_key(config_handle);
+        if let Err(error) = bridge.refresh_registry_from_daemon(api_key.as_deref()).await {
+            eprintln!("Registry refresh after map update failed (non-fatal): {}", error);
+        }
+    }
+
+    Ok(Json(response))
+}
+
 #[get("/maps")]
 pub async fn list_maps(
     bridge: &State<MapsBridgeState>,
@@ -408,7 +551,15 @@ pub async fn list_maps(
 }
 
 pub fn mount_maps_bridge_routes() -> Vec<Route> {
-    routes![sync_registry, registry_updates, admin_install_map, list_maps]
+    routes![
+        sync_registry,
+        registry_updates,
+        admin_install_map,
+        get_admin_map_detail,
+        admin_uninstall_map,
+        admin_check_update_map,
+        list_maps
+    ]
 }
 
 #[cfg(test)]
@@ -440,6 +591,22 @@ sync_api_key = "test-secret"
         ));
         assert!(!bridge.verify_sync_token(&config, Some("Bearer wrong")));
         assert!(!bridge.verify_sync_token(&config, None));
+    }
+
+    #[test]
+    fn mount_registers_admin_manage_routes() {
+        let paths: Vec<String> = mount_maps_bridge_routes()
+            .iter()
+            .map(|route| route.uri.to_string())
+            .collect();
+
+        assert!(paths.iter().any(|path| path == "/maps/admin/<id>"));
+        assert!(paths
+            .iter()
+            .any(|path| path == "/maps/admin/<id>/uninstall"));
+        assert!(paths
+            .iter()
+            .any(|path| path == "/maps/admin/<id>/check-update"));
     }
 
     #[tokio::test]

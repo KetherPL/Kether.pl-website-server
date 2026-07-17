@@ -370,7 +370,7 @@ mod tests {
 
     #[tokio::test]
     async fn updates_status_proxies_available_and_in_progress() {
-        let body = r#"{"success":true,"data":{"available":[{"name":"Foo","map_id":12,"source_kind":"workshop"}],"in_progress":[{"name":"Bar","map_id":99,"source_kind":"l4d2center"}]},"error":null}"#;
+        let body = r#"{"success":true,"data":{"available":[{"name":"Foo","map_id":12,"source_kind":"workshop"}],"in_progress":[{"name":"Bar","map_id":99,"source_kind":"l4d2center","phase":"downloading","bytes_downloaded":42,"bytes_total":100,"percent":42,"detail":"map.vpk"}]},"error":null}"#;
         let (url, request) = mock_daemon("200 OK", body.to_string()).await;
 
         let status = proxy_daemon_updates_status(&Client::new(), &url, None)
@@ -380,6 +380,11 @@ mod tests {
         assert_eq!(status.available[0].map_id, 12);
         assert_eq!(status.in_progress.len(), 1);
         assert_eq!(status.in_progress[0].map_id, 99);
+        assert_eq!(status.in_progress[0].phase.as_deref(), Some("downloading"));
+        assert_eq!(status.in_progress[0].bytes_downloaded, 42);
+        assert_eq!(status.in_progress[0].bytes_total, Some(100));
+        assert_eq!(status.in_progress[0].percent, Some(42));
+        assert_eq!(status.in_progress[0].detail.as_deref(), Some("map.vpk"));
         assert!(request
             .await
             .expect("request task")

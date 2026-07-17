@@ -281,16 +281,40 @@ impl MapsBridgeState {
             return Err("Daemon URL not configured".to_string());
         }
 
+        let status = self.admin_updates_status().await?;
+        let in_progress_ids: std::collections::HashSet<u64> =
+            status.in_progress.iter().map(|item| item.map_id).collect();
+
         let ids: Vec<u64> = if let Some(id) = map_id {
+            if in_progress_ids.contains(&id) {
+                return Ok(AdminApplyUpdatesResponse {
+                    results: vec![AdminUpdateCheckResponse {
+                        status: UpdateStatus::Failed,
+                        message: "Map update is already in progress".to_string(),
+                        map: None,
+                    }],
+                });
+            }
             vec![id]
         } else {
-            let status = self.admin_updates_status().await?;
-            status.available.into_iter().map(|item| item.map_id).collect()
+            status
+                .available
+                .into_iter()
+                .map(|item| item.map_id)
+                .filter(|id| !in_progress_ids.contains(id))
+                .collect()
         };
 
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
-            results.push(self.apply_map_update(id).await?);
+            match self.apply_map_update(id).await {
+                Ok(result) => results.push(result),
+                Err(error) => results.push(AdminUpdateCheckResponse {
+                    status: UpdateStatus::Failed,
+                    message: error,
+                    map: None,
+                }),
+            }
         }
         Ok(AdminApplyUpdatesResponse { results })
     }

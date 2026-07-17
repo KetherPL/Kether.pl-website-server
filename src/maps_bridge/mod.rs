@@ -29,15 +29,15 @@ use admin_install::{
 };
 use admin_manage::{
     proxy_daemon_get_map, proxy_daemon_l4d2center_update, proxy_daemon_uninstall_map,
-    proxy_daemon_workshop_update, MapUpdateOutcome,
+    proxy_daemon_updates_status, proxy_daemon_workshop_update, MapUpdateOutcome,
 };
 use daemon_client::with_daemon_auth;
 
 use mapping::daemon_entry_to_website;
 use models::{
-    AdminMapDetailResponse, AdminUpdateCheckResponse, DaemonApiResponse, DaemonMapEntry,
-    DaemonSourceKind, MapsDataSource, MapsListResponse, SyncRequest, UpdateStatus,
-    UpdatesResponse,
+    AdminApplyUpdatesRequest, AdminApplyUpdatesResponse, AdminMapDetailResponse,
+    AdminMapUpdatesStatus, AdminUpdateCheckResponse, DaemonApiResponse, DaemonMapEntry,
+    DaemonSourceKind, MapsDataSource, MapsListResponse, SyncRequest, UpdateStatus, UpdatesResponse,
 };
 use registry_store::{load_registry, resolve_data_path, save_registry};
 use workshop_previews::{
@@ -258,6 +258,44 @@ impl MapsBridgeState {
         &self,
         id: u64,
     ) -> Result<AdminUpdateCheckResponse, String> {
+        self.apply_map_update(id).await
+    }
+
+    pub async fn admin_updates_status(&self) -> Result<AdminMapUpdatesStatus, String> {
+        if self.daemon_url.trim().is_empty() {
+            return Err("Daemon URL not configured".to_string());
+        }
+        proxy_daemon_updates_status(
+            &self.http_client,
+            &self.daemon_url,
+            self.sync_api_key.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn admin_apply_updates(
+        &self,
+        map_id: Option<u64>,
+    ) -> Result<AdminApplyUpdatesResponse, String> {
+        if self.daemon_url.trim().is_empty() {
+            return Err("Daemon URL not configured".to_string());
+        }
+
+        let ids: Vec<u64> = if let Some(id) = map_id {
+            vec![id]
+        } else {
+            let status = self.admin_updates_status().await?;
+            status.available.into_iter().map(|item| item.map_id).collect()
+        };
+
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            results.push(self.apply_map_update(id).await?);
+        }
+        Ok(AdminApplyUpdatesResponse { results })
+    }
+
+    async fn apply_map_update(&self, id: u64) -> Result<AdminUpdateCheckResponse, String> {
         if self.daemon_url.trim().is_empty() {
             return Err("Daemon URL not configured".to_string());
         }
@@ -564,6 +602,44 @@ pub async fn admin_check_update_map(
     Ok(Json(response))
 }
 
+#[get("/maps/admin/updates")]
+pub async fn admin_list_updates(
+    _admin: AdminUser,
+    bridge: &State<MapsBridgeState>,
+) -> Result<Json<AdminMapUpdatesStatus>, (Status, Json<AdminInstallErrorResponse>)> {
+    bridge
+        .admin_updates_status()
+        .await
+        .map(Json)
+        .map_err(admin_proxy_error)
+}
+
+#[post("/maps/admin/updates/apply", data = "<body>")]
+pub async fn admin_apply_updates(
+    _admin: AdminUser,
+    bridge: &State<MapsBridgeState>,
+    config_handle: &State<ConfigHandle>,
+    body: Json<AdminApplyUpdatesRequest>,
+) -> Result<Json<AdminApplyUpdatesResponse>, (Status, Json<AdminInstallErrorResponse>)> {
+    let response = bridge
+        .admin_apply_updates(body.map_id)
+        .await
+        .map_err(admin_proxy_error)?;
+
+    if response
+        .results
+        .iter()
+        .any(|result| result.status == UpdateStatus::Updated)
+    {
+        let api_key = steam_api_key(config_handle);
+        if let Err(error) = bridge.refresh_registry_from_daemon(api_key.as_deref()).await {
+            eprintln!("Registry refresh after map updates failed (non-fatal): {}", error);
+        }
+    }
+
+    Ok(Json(response))
+}
+
 #[get("/maps")]
 pub async fn list_maps(
     bridge: &State<MapsBridgeState>,
@@ -590,6 +666,8 @@ pub fn mount_maps_bridge_routes() -> Vec<Route> {
         sync_registry,
         registry_updates,
         admin_install_map,
+        admin_list_updates,
+        admin_apply_updates,
         get_admin_map_detail,
         admin_uninstall_map,
         admin_check_update_map,
@@ -643,6 +721,10 @@ sync_api_key = "test-secret"
         assert!(paths
             .iter()
             .any(|path| path == "/maps/admin/<id>/check-update"));
+        assert!(paths.iter().any(|path| path == "/maps/admin/updates"));
+        assert!(paths
+            .iter()
+            .any(|path| path == "/maps/admin/updates/apply"));
     }
 
     #[tokio::test]

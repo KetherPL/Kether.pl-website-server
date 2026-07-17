@@ -141,6 +141,35 @@ pub struct AdminUpdateCheckResponse {
     pub map: Option<AdminMapDetailResponse>,
 }
 
+/// Compact pending/in-progress update entry from the daemon.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AdminMapUpdateItem {
+    pub name: String,
+    pub map_id: u64,
+    pub source_kind: DaemonSourceKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AdminMapUpdatesStatus {
+    pub available: Vec<AdminMapUpdateItem>,
+    pub in_progress: Vec<AdminMapUpdateItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AdminApplyUpdatesRequest {
+    #[serde(default)]
+    pub map_id: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AdminApplyUpdatesResponse {
+    pub results: Vec<AdminUpdateCheckResponse>,
+}
+
 /// Daemon `GET /api/maps` envelope.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(crate = "rocket::serde")]

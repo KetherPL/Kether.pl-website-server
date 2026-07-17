@@ -132,6 +132,22 @@ pub async fn proxy_daemon_l4d2center_update(
     ))
 }
 
+pub async fn proxy_daemon_updates_status(
+    client: &Client,
+    daemon_url: &str,
+    sync_api_key: Option<&str>,
+) -> Result<super::models::AdminMapUpdatesStatus, String> {
+    let url = format!(
+        "{}/api/maps/updates/available",
+        daemon_url.trim_end_matches('/')
+    );
+    let response = with_daemon_auth(client.get(&url), sync_api_key)
+        .send()
+        .await
+        .map_err(|e| format!("Daemon request failed: {e}"))?;
+    parse_daemon_response(response).await
+}
+
 async fn post_update_request<T: for<'de> Deserialize<'de>>(
     client: &Client,
     url: &str,
@@ -350,6 +366,24 @@ mod tests {
 
         let request = request.await.expect("request task");
         assert!(request.contains("authorization: Bearer shared-sync-secret"));
+    }
+
+    #[tokio::test]
+    async fn updates_status_proxies_available_and_in_progress() {
+        let body = r#"{"success":true,"data":{"available":[{"name":"Foo","map_id":12,"source_kind":"workshop"}],"in_progress":[{"name":"Bar","map_id":99,"source_kind":"l4d2center"}]},"error":null}"#;
+        let (url, request) = mock_daemon("200 OK", body.to_string()).await;
+
+        let status = proxy_daemon_updates_status(&Client::new(), &url, None)
+            .await
+            .expect("updates status");
+        assert_eq!(status.available.len(), 1);
+        assert_eq!(status.available[0].map_id, 12);
+        assert_eq!(status.in_progress.len(), 1);
+        assert_eq!(status.in_progress[0].map_id, 99);
+        assert!(request
+            .await
+            .expect("request task")
+            .starts_with("GET /api/maps/updates/available "));
     }
 }
 

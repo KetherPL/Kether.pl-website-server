@@ -46,7 +46,7 @@ fn muted_users_path() -> Result<std::path::PathBuf, String> {
 
 async fn load_from_disk() -> Result<Vec<MutedUserRecord>, String> {
     let path = muted_users_path()?;
-    let content = match smol::fs::read_to_string(&path).await {
+    let content = match tokio::fs::read_to_string(&path).await {
         Ok(content) => content,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(format!("Failed to read {}: {}", path.display(), e)),
@@ -61,10 +61,10 @@ async fn save_to_disk(records: &Vec<MutedUserRecord>) -> Result<(), String> {
     let json = rocket::serde::json::to_pretty_string(records)
         .map_err(|e| format!("Failed to serialize muted users: {}", e))?;
     let temp_path = path.with_extension("tmp");
-    smol::fs::write(&temp_path, json)
+    tokio::fs::write(&temp_path, json)
         .await
         .map_err(|e| format!("Failed to write temp file: {}", e))?;
-    smol::fs::rename(&temp_path, &path)
+    tokio::fs::rename(&temp_path, &path)
         .await
         .map_err(|e| format!("Failed to rename temp file: {}", e))?;
     Ok(())

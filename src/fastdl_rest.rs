@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use rocket::{catch, catchers, http::{ContentType, Header, Status}, response::{self, Responder, Response}, Catcher, Request, fairing::{Fairing, Info, Kind}};
-use smol::{fs, stream::StreamExt};
+use tokio::fs;
 use once_cell::sync::OnceCell;
 use std::path::{Component, Path, PathBuf};
 use rocket::serde::Serialize;
@@ -303,11 +303,9 @@ async fn directory_listing_impl(path: PathBuf) -> Result<HtmlResponse, Status> {
     // Read directory contents
     let mut entries = Vec::new();
     
-    if let Ok(dir_entries) = fs::read_dir(&full_path).await {
-        let entries_stream: Vec<_> = dir_entries.collect().await;
-        for entry_result in entries_stream {
-            if let Ok(entry) = entry_result
-                && let Ok(metadata) = entry.metadata().await
+    if let Ok(mut dir_entries) = fs::read_dir(&full_path).await {
+        while let Ok(Some(entry)) = dir_entries.next_entry().await {
+            if let Ok(metadata) = entry.metadata().await
             {
                 let name = entry.file_name().to_string_lossy().to_string();
                 let is_dir = metadata.is_dir();

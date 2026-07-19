@@ -195,7 +195,7 @@ impl CommandHandler for StatusCommand {
         let query_futures = servers.iter().map(|server| {
             let ip = server.ip;
             let port = server.port;
-            async move { LiveServerInfo::query_server_with_retry(ip, port).await }
+            async move { LiveServerInfo::query_server_with_retry(ip, port, false).await }
         });
         let query_results = join_all(query_futures).await;
 

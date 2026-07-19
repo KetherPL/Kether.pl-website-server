@@ -76,11 +76,20 @@ fn get_cache() -> &'static RwLock<ServerCache> {
 /// - 5-second timeout per attempt
 /// - Response caching (60 seconds)
 /// - Proper HTTP status codes
-pub async fn query_server_with_retry(ip: &str, port: u16) -> Result<L4D2ServerInfo, Status> {
+pub async fn query_server_with_retry(ip: &str, port: u16, force_fetch: bool) -> Result<L4D2ServerInfo, Status> {
+	let parsed_ip: IpAddr = ip.parse().map_err(|_| Status::BadRequest)?;
+
+	if !force_fetch {
+		if let Ok(cache) = get_cache().read() {
+			if let Some((cached_info, cached_time)) = cache.get(&(parsed_ip, port)) {
+				if std::time::Instant::now().duration_since(*cached_time).as_secs() < 15 {
+					return Ok(cached_info.clone());
+				}
+			}
+		}
+	}
 	const MAX_RETRIES: u32 = 3;
 	const CACHE_TTL_SECS: u64 = 60;
-	let parsed_ip: IpAddr = ip.parse().map_err(|_| Status::BadRequest)?;
-	
 	// Try to query with retries
 	for attempt in 1..=MAX_RETRIES {
 		// Run blocking query in separate thread to avoid blocking async runtime
@@ -204,19 +213,40 @@ pub async fn live_server_info(
 		return Err(Status::TooManyRequests);
 	}
 
-	query_server_with_retry(&ip, port).await.map(Json)
+	query_server_with_retry(&ip, port, false).await.map(Json)
 }
 
 #[get("/kether")]
 pub async fn live_server_info_kether(config: &State<ConfigHandle>) -> Result<Json<L4D2ServerInfo>, Status> {
 	let config = config_snapshot(config);
-	query_server_with_retry(config.server_ip(), config.server_port()).await
+	query_server_with_retry(config.server_ip(), config.server_port(), false).await
 		.map(Json)
 }
 
 #[get("/kether2")]
 pub async fn live_server_info_kether2(config: &State<ConfigHandle>) -> Result<Json<L4D2ServerInfo>, Status> {
 	let config = config_snapshot(config);
-	query_server_with_retry(config.server2_ip(), config.server2_port()).await
+	query_server_with_retry(config.server2_ip(), config.server2_port(), false).await
 		.map(Json)
+}
+pub fn start_background_queries(config_handle: ConfigHandle) {
+    tokio::spawn(async move {
+        loop {
+            let (ip1, port1, ip2, port2) = {
+                if let Ok(guard) = config_handle.read() {
+                    (guard.server_ip().to_string(), guard.server_port(), guard.server2_ip().to_string(), guard.server2_port())
+                } else {
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    continue;
+                }
+            };
+            
+            // Query first server
+            let _ = query_server_with_retry(&ip1, port1, true).await;
+            // Query second server
+            let _ = query_server_with_retry(&ip2, port2, true).await;
+            
+            tokio::time::sleep(Duration::from_secs(15)).await;
+        }
+    });
 }

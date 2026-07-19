@@ -3,7 +3,7 @@
 use std::{fmt, path::{Path, PathBuf}};
 use colored::Colorize;
 use rocket::serde::{Deserialize, Serialize};
-use smol::fs;
+use tokio::fs;
 
 /// Configuration file name constant
 pub const CONF_FILE_NAME: &str = "config.toml";
@@ -520,7 +520,7 @@ impl Config {
 		let conf_path = exe_dir()?.join(CONF_FILE_NAME);
 		
 		// Create default config if it doesn't exist
-		if !smol::fs::metadata(&conf_path).await.is_ok() {
+		if !fs::metadata(&conf_path).await.is_ok() {
 			println!("Creating default config file at: {}", conf_path.display());
 			let default_config = ConfigFile::default();
 			let toml_content = Self::generate_toml_with_comments(&default_config);

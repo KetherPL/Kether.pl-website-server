@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use rocket::serde::{Deserialize, Serialize};
-use smol::fs;
+use tokio::fs;
 
 /// File names for JSON storage
 const COMMANDS_FILE: &str = "cmds.json";
@@ -60,7 +60,7 @@ struct BindSuggestionData {
 #[derive(Debug, Clone)]
 pub struct JsonDatabase {
     inner: Arc<RwLock<JsonDatabaseInternal>>,
-    base_path: PathBuf,
+    save_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 impl JsonDatabase {
@@ -102,9 +102,36 @@ impl JsonDatabase {
             bind_suggestions,
         };
         
+                let inner = Arc::new(RwLock::new(internal));
+        let (save_tx, mut save_rx) = tokio::sync::mpsc::channel(100);
+        
+        let bg_inner = inner.clone();
+        let bg_base_path = base_path.clone();
+        tokio::spawn(async move {
+            loop {
+                if save_rx.recv().await.is_none() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                while let Ok(_) = save_rx.try_recv() {}
+                
+                let (commands_clone, binds_clone, suggestions_clone) = {
+                    if let Ok(db) = bg_inner.read() {
+                        (db.commands.clone(), db.binds.clone(), db.bind_suggestions.clone())
+                    } else {
+                        continue;
+                    }
+                };
+                
+                let _ = Self::save_json_file(&bg_base_path.join(COMMANDS_FILE), &commands_clone).await;
+                let _ = Self::save_json_file(&bg_base_path.join(BINDS_FILE), &binds_clone).await;
+                let _ = Self::save_json_file(&bg_base_path.join(BIND_SUGGESTIONS_FILE), &suggestions_clone).await;
+            }
+        });
+        
         Ok(JsonDatabase {
-            inner: Arc::new(RwLock::new(internal)),
-            base_path,
+            inner,
+            save_tx,
         })
     }
     
@@ -173,7 +200,7 @@ impl JsonDatabase {
     }
     
     pub async fn create_command(&self, command: String, description: String) -> Result<Command, String> {
-        let (id, commands_clone) = {
+        let (id, _commands_clone) = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -195,13 +222,13 @@ impl JsonDatabase {
         }; // Lock is dropped here
         
         // Save to file (async, no lock held)
-        Self::save_json_file(&self.base_path.join(COMMANDS_FILE), &commands_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(Command { id, command, description })
     }
     
     pub async fn update_command(&self, id: i32, command: String, description: String) -> Result<Command, String> {
-        let commands_clone = {
+        let _commands_clone = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -225,13 +252,13 @@ impl JsonDatabase {
             db.commands.clone()
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(COMMANDS_FILE), &commands_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(Command { id, command, description })
     }
     
     pub async fn delete_command(&self, id: i32) -> Result<(), String> {
-        let commands_clone = {
+        let _commands_clone = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -244,7 +271,7 @@ impl JsonDatabase {
             db.commands.clone()
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(COMMANDS_FILE), &commands_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(())
     }
@@ -286,7 +313,7 @@ impl JsonDatabase {
     }
     
     pub async fn create_bind(&self, author: String, text: String) -> Result<Bind, String> {
-        let (id, binds_clone) = {
+        let (id, _binds_clone) = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -309,7 +336,7 @@ impl JsonDatabase {
             (id, db.binds.clone())
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(BINDS_FILE), &binds_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(Bind { 
             id, 
@@ -321,7 +348,7 @@ impl JsonDatabase {
     }
     
     pub async fn update_bind(&self, id: i32, author: String, text: String, upvote: Vec<i64>, downvote: Vec<i64>) -> Result<Bind, String> {
-        let binds_clone = {
+        let _binds_clone = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -347,13 +374,13 @@ impl JsonDatabase {
             db.binds.clone()
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(BINDS_FILE), &binds_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(Bind { id, author, text, upvote, downvote })
     }
     
     pub async fn delete_bind(&self, id: i32) -> Result<(), String> {
-        let binds_clone = {
+        let _binds_clone = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -366,7 +393,7 @@ impl JsonDatabase {
             db.binds.clone()
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(BINDS_FILE), &binds_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(())
     }
@@ -406,7 +433,7 @@ impl JsonDatabase {
     }
     
     pub async fn create_bind_suggestion(&self, author: String, text: String, proposed_by: String) -> Result<BindSuggestion, String> {
-        let (id, suggestions_clone) = {
+        let (id, _suggestions_clone) = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -428,13 +455,13 @@ impl JsonDatabase {
             (id, db.bind_suggestions.clone())
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(BIND_SUGGESTIONS_FILE), &suggestions_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(BindSuggestion { id, author, text, proposed_by })
     }
     
     pub async fn update_bind_suggestion(&self, id: i32, author: String, text: String, proposed_by: String) -> Result<BindSuggestion, String> {
-        let suggestions_clone = {
+        let _suggestions_clone = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -459,13 +486,13 @@ impl JsonDatabase {
             db.bind_suggestions.clone()
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(BIND_SUGGESTIONS_FILE), &suggestions_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(BindSuggestion { id, author, text, proposed_by })
     }
     
     pub async fn delete_bind_suggestion(&self, id: i32) -> Result<(), String> {
-        let suggestions_clone = {
+        let _suggestions_clone = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -478,7 +505,7 @@ impl JsonDatabase {
             db.bind_suggestions.clone()
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(BIND_SUGGESTIONS_FILE), &suggestions_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(())
     }
@@ -490,7 +517,7 @@ impl JsonDatabase {
     /// If the voter already voted, their vote is moved to the new category.
     /// A voter can only be in either upvote or downvote, not both.
     pub async fn add_vote(&self, bind_id: i32, voter_steam_id: i64, vote_type: &str) -> Result<(), String> {
-        let binds_clone = {
+        let _binds_clone = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -512,14 +539,14 @@ impl JsonDatabase {
             db.binds.clone()
         }; // Lock is dropped here
         
-        Self::save_json_file(&self.base_path.join(BINDS_FILE), &binds_clone).await?;
+        let _ = self.save_tx.send(()).await;
         
         Ok(())
     }
     
     /// Remove a vote from a bind
     pub async fn remove_vote(&self, bind_id: i32, voter_steam_id: i64) -> Result<(), String> {
-        let binds_clone = {
+        let _binds_clone = {
             let mut db = self.inner.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
             
@@ -534,7 +561,7 @@ impl JsonDatabase {
             db.binds.clone()
         }; // Lock is dropped here
 
-        Self::save_json_file(&self.base_path.join(BINDS_FILE), &binds_clone).await?;
+        let _ = self.save_tx.send(()).await;
         Ok(())
     }
 }

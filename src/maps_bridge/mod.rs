@@ -17,7 +17,7 @@ use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome, Request};
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-use rocket::{get, post, routes, Route, State};
+use rocket::{get, options, post, routes, Route, State};
 
 use crate::auth::AdminUser;
 use crate::steam_bot::registry::ConfigHandle;
@@ -29,7 +29,7 @@ use admin_install::{
 };
 use admin_manage::{
     proxy_daemon_get_map, proxy_daemon_l4d2center_update, proxy_daemon_uninstall_map,
-    proxy_daemon_updates_status, proxy_daemon_workshop_update, MapUpdateOutcome,
+    proxy_daemon_updates_status, proxy_daemon_updates_check, proxy_daemon_workshop_update, MapUpdateOutcome,
 };
 use daemon_client::with_daemon_auth;
 
@@ -267,6 +267,18 @@ impl MapsBridgeState {
         }
         proxy_daemon_updates_status(
             &self.http_client,
+            &self.daemon_url,
+            self.sync_api_key.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn admin_updates_check(&self) -> Result<AdminMapUpdatesStatus, String> {
+        if self.daemon_url.trim().is_empty() {
+            return Err("Daemon URL not configured".to_string());
+        }
+        proxy_daemon_updates_check(
+            &self.install_http_client,
             &self.daemon_url,
             self.sync_api_key.as_deref(),
         )
@@ -552,7 +564,10 @@ pub async fn admin_install_map(
 }
 
 fn admin_proxy_error(error: String) -> (Status, Json<AdminInstallErrorResponse>) {
-    let status = if error.to_lowercase().contains("not found") {
+    let lower = error.to_lowercase();
+    let status = if lower.contains("already in progress") {
+        Status::Conflict
+    } else if lower.contains("not found") {
         Status::NotFound
     } else if error.contains("not configured")
         || error.contains("Daemon request failed")
@@ -638,6 +653,18 @@ pub async fn admin_list_updates(
         .map_err(admin_proxy_error)
 }
 
+#[post("/maps/admin/updates/check")]
+pub async fn admin_check_updates(
+    _admin: AdminUser,
+    bridge: &State<MapsBridgeState>,
+) -> Result<Json<AdminMapUpdatesStatus>, (Status, Json<AdminInstallErrorResponse>)> {
+    bridge
+        .admin_updates_check()
+        .await
+        .map(Json)
+        .map_err(admin_proxy_error)
+}
+
 #[post("/maps/admin/updates/apply", data = "<body>")]
 pub async fn admin_apply_updates(
     _admin: AdminUser,
@@ -685,17 +712,69 @@ pub async fn list_maps(
         })
 }
 
+#[options("/maps")]
+pub fn options_list_maps() -> Status {
+    Status::Ok
+}
+
+#[options("/maps/admin/install")]
+pub fn options_admin_install_map() -> Status {
+    Status::Ok
+}
+
+#[options("/maps/admin/<id>")]
+pub fn options_admin_map_detail(id: u64) -> Status {
+    let _ = id;
+    Status::Ok
+}
+
+#[options("/maps/admin/<id>/uninstall")]
+pub fn options_admin_uninstall_map(id: u64) -> Status {
+    let _ = id;
+    Status::Ok
+}
+
+#[options("/maps/admin/<id>/check-update")]
+pub fn options_admin_check_update_map(id: u64) -> Status {
+    let _ = id;
+    Status::Ok
+}
+
+#[options("/maps/admin/updates")]
+pub fn options_admin_list_updates() -> Status {
+    Status::Ok
+}
+
+#[options("/maps/admin/updates/check")]
+pub fn options_admin_check_updates() -> Status {
+    Status::Ok
+}
+
+#[options("/maps/admin/updates/apply")]
+pub fn options_admin_apply_updates() -> Status {
+    Status::Ok
+}
+
 pub fn mount_maps_bridge_routes() -> Vec<Route> {
     routes![
         sync_registry,
         registry_updates,
         admin_install_map,
         admin_list_updates,
+        admin_check_updates,
         admin_apply_updates,
         get_admin_map_detail,
         admin_uninstall_map,
         admin_check_update_map,
-        list_maps
+        list_maps,
+        options_list_maps,
+        options_admin_install_map,
+        options_admin_map_detail,
+        options_admin_uninstall_map,
+        options_admin_check_update_map,
+        options_admin_list_updates,
+        options_admin_check_updates,
+        options_admin_apply_updates,
     ]
 }
 
@@ -749,6 +828,37 @@ sync_api_key = "test-secret"
         assert!(paths
             .iter()
             .any(|path| path == "/maps/admin/updates/apply"));
+        assert!(paths
+            .iter()
+            .any(|path| path == "/maps/admin/updates/check"));
+        // OPTIONS preflight handlers for browser CORS
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|path| path.as_str() == "/maps/admin/updates")
+                .count(),
+            2,
+            "GET + OPTIONS for /maps/admin/updates"
+        );
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|path| path.as_str() == "/maps/admin/updates/check")
+                .count(),
+            2,
+            "POST + OPTIONS for /maps/admin/updates/check"
+        );
+    }
+
+    #[test]
+    fn admin_proxy_error_maps_already_in_progress_to_conflict() {
+        let (status, body) =
+            admin_proxy_error("A map update check is already in progress".to_string());
+        assert_eq!(status, Status::Conflict);
+        assert!(body.error.contains("already in progress"));
+
+        let (status, _) = admin_proxy_error("Map #1 not found".to_string());
+        assert_eq!(status, Status::NotFound);
     }
 
     #[tokio::test]

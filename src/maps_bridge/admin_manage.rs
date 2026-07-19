@@ -148,6 +148,22 @@ pub async fn proxy_daemon_updates_status(
     parse_daemon_response(response).await
 }
 
+pub async fn proxy_daemon_updates_check(
+    client: &Client,
+    daemon_url: &str,
+    sync_api_key: Option<&str>,
+) -> Result<super::models::AdminMapUpdatesStatus, String> {
+    let url = format!(
+        "{}/api/maps/updates/check",
+        daemon_url.trim_end_matches('/')
+    );
+    let response = with_daemon_auth(client.post(&url), sync_api_key)
+        .send()
+        .await
+        .map_err(|e| format!("Daemon request failed: {e}"))?;
+    parse_daemon_response(response).await
+}
+
 async fn post_update_request<T: for<'de> Deserialize<'de>>(
     client: &Client,
     url: &str,
@@ -389,6 +405,23 @@ mod tests {
             .await
             .expect("request task")
             .starts_with("GET /api/maps/updates/available "));
+    }
+
+    #[tokio::test]
+    async fn updates_check_proxies_check_endpoint() {
+        let body = r#"{"success":true,"data":{"available":[{"name":"Foo","map_id":12,"source_kind":"workshop"}],"in_progress":[]},"error":null}"#;
+        let (url, request) = mock_daemon("200 OK", body.to_string()).await;
+
+        let status = proxy_daemon_updates_check(&Client::new(), &url, None)
+            .await
+            .expect("updates check");
+        assert_eq!(status.available.len(), 1);
+        assert_eq!(status.available[0].map_id, 12);
+        assert_eq!(status.in_progress.len(), 0);
+        assert!(request
+            .await
+            .expect("request task")
+            .starts_with("POST /api/maps/updates/check "));
     }
 }
 

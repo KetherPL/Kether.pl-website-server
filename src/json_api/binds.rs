@@ -113,6 +113,11 @@ pub async fn update_bind_by_id(
 	.map_err(|e| storage_error_status("updating bind by id", &e, &["not found"], &["already exists"]))
 }
 
+#[options("/binds/getBinds")]
+pub fn options_list_binds() -> Status {
+	ok_status()
+}
+
 #[options("/binds/addBind")]
 pub fn options_create_bind() -> Status {
 	ok_status()
@@ -136,6 +141,7 @@ pub fn routes() -> Vec<Route> {
 		delete_bind,
 		update_bind,
 		update_bind_by_id,
+		options_list_binds,
 		options_create_bind,
 		options_delete_bind,
 		options_update_bind,

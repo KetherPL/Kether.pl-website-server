@@ -64,7 +64,7 @@ use rocket_cors::{AllowedOrigins, CorsOptions};
 /// 
 /// # Returns
 /// A configured Rocket instance ready to launch
-pub fn build_rocket() -> Rocket<Build> {
+pub async fn build_rocket() -> Rocket<Build> {
 	// Configure CORS
 	let allowed_origins = AllowedOrigins::some_exact(&[
 		"http://localhost:3000", // Local Kether website 'npm run start'
@@ -101,8 +101,7 @@ pub fn build_rocket() -> Rocket<Build> {
 	}
 	#[cfg(feature = "rest_json_db")]
 	{
-		// Load JSON database using smol runtime
-		let json_db = smol::block_on(JsonDatabase::load())
+		let json_db = JsonDatabase::load().await
 			.expect("Failed to load JSON database");
 		rocket_build = rocket_build.manage(json_db);
 		rocket_build = rocket_build.mount("/api", mount_json_routes());
@@ -127,6 +126,7 @@ pub fn build_rocket() -> Rocket<Build> {
 	}
 	#[cfg(feature = "server_query")]
 	{
+		crate::LiveServerInfo::start_background_queries(registry::config_handle());
 		rocket_build = rocket_build.mount("/api/LiveServerInfo", routes![
 			live_server_info, live_server_info_kether, live_server_info_kether2,
 		]);
@@ -168,7 +168,7 @@ pub fn build_rocket() -> Rocket<Build> {
 
 /// Runs the Rocket server until `shutdown` receives a signal.
 pub async fn run(mut shutdown: tokio::sync::broadcast::Receiver<()>) -> Result<(), String> {
-	let rocket = build_rocket();
+	let rocket = build_rocket().await;
 	let rocket = rocket.ignite().await.map_err(|e| e.to_string())?;
 	let shutdown_handle = rocket.shutdown();
 

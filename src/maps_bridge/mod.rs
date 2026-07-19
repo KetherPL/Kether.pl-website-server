@@ -3,9 +3,13 @@
 mod admin_install;
 mod admin_manage;
 mod daemon_client;
+mod l4d2center_index;
 mod mapping;
 mod models;
 mod registry_store;
+mod suggestion_conflicts;
+mod suggestions;
+mod suggestions_store;
 mod workshop_previews;
 
 use std::path::PathBuf;
@@ -767,6 +771,10 @@ pub fn mount_maps_bridge_routes() -> Vec<Route> {
         admin_uninstall_map,
         admin_check_update_map,
         list_maps,
+        suggestions::list_map_suggestions,
+        suggestions::create_map_suggestion,
+        suggestions::deny_map_suggestion,
+        suggestions::accept_map_suggestion,
         options_list_maps,
         options_admin_install_map,
         options_admin_map_detail,
@@ -775,6 +783,9 @@ pub fn mount_maps_bridge_routes() -> Vec<Route> {
         options_admin_list_updates,
         options_admin_check_updates,
         options_admin_apply_updates,
+        suggestions::options_map_suggestions,
+        suggestions::options_deny_map_suggestion,
+        suggestions::options_accept_map_suggestion,
     ]
 }
 
@@ -831,6 +842,13 @@ sync_api_key = "test-secret"
         assert!(paths
             .iter()
             .any(|path| path == "/maps/admin/updates/check"));
+        assert!(paths.iter().any(|path| path == "/maps/suggestions"));
+        assert!(paths
+            .iter()
+            .any(|path| path == "/maps/suggestions/<id>/deny"));
+        assert!(paths
+            .iter()
+            .any(|path| path == "/maps/suggestions/<id>/accept"));
         // OPTIONS preflight handlers for browser CORS
         assert_eq!(
             paths

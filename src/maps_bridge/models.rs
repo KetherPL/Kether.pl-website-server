@@ -206,3 +206,62 @@ pub fn workshop_download_url(workshop_id: u64) -> String {
         workshop_id
     )
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde", rename_all = "snake_case")]
+pub enum MapSuggestionSourceKind {
+    Workshop,
+    L4d2Center,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct MapSuggestion {
+    pub id: u64,
+    pub source_kind: MapSuggestionSourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workshop_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub l4d2center_name: Option<String>,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_link: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    pub proposed_by: String,
+    pub proposed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct MapSuggestionConflict {
+    pub kind: String,
+    pub installed_map_id: u64,
+    pub installed_name: String,
+    pub installed_source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct MapSuggestionView {
+    #[serde(flatten)]
+    pub suggestion: MapSuggestion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<MapSuggestionConflict>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct CreateMapSuggestionRequest {
+    pub mode: String,
+    pub input: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AcceptMapSuggestionResponse {
+    pub map_id: u64,
+}
+

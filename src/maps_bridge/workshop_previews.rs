@@ -113,35 +113,72 @@ struct SteamPublishedFile {
     result: u32,
     #[serde(default)]
     preview_url: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    file_size: Option<rocket::serde::json::Value>,
 }
 
-pub fn parse_preview_urls_from_response(body: &str) -> Result<HashMap<u64, String>, String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkshopFileMeta {
+    pub workshop_id: u64,
+    pub title: String,
+    pub preview_url: Option<String>,
+    pub size_bytes: Option<u64>,
+}
+
+fn parse_file_size(value: Option<&rocket::serde::json::Value>) -> Option<u64> {
+    match value? {
+        rocket::serde::json::Value::Number(n) => n.as_u64(),
+        rocket::serde::json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+pub fn parse_workshop_meta_from_response(body: &str) -> Result<HashMap<u64, WorkshopFileMeta>, String> {
     let parsed: SteamApiResponse = rocket::serde::json::from_str(body)
         .map_err(|e| format!("Failed to parse Steam API response: {}", e))?;
 
-    let mut previews = HashMap::new();
+    let mut metas = HashMap::new();
     for item in parsed.response.publishedfiledetails {
         if item.result != 1 {
             continue;
         }
-
-        let Some(url) = item
+        let Ok(workshop_id) = item.publishedfileid.parse::<u64>() else {
+            continue;
+        };
+        let title = item
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or("Unknown")
+            .to_string();
+        let preview_url = item
             .preview_url
             .as_deref()
             .map(str::trim)
             .filter(|url| !url.is_empty())
-        else {
-            continue;
-        };
-
-        let Ok(workshop_id) = item.publishedfileid.parse::<u64>() else {
-            continue;
-        };
-
-        previews.insert(workshop_id, url.to_string());
+            .map(str::to_string);
+        metas.insert(
+            workshop_id,
+            WorkshopFileMeta {
+                workshop_id,
+                title,
+                preview_url,
+                size_bytes: parse_file_size(item.file_size.as_ref()),
+            },
+        );
     }
+    Ok(metas)
+}
 
-    Ok(previews)
+pub fn parse_preview_urls_from_response(body: &str) -> Result<HashMap<u64, String>, String> {
+    let metas = parse_workshop_meta_from_response(body)?;
+    Ok(metas
+        .into_iter()
+        .filter_map(|(id, meta)| meta.preview_url.map(|url| (id, url)))
+        .collect())
 }
 
 fn build_steam_request_body(ids: &[u64], api_key: Option<&str>) -> String {
@@ -192,6 +229,38 @@ pub async fn fetch_preview_urls(
     }
 
     Ok(all_previews)
+}
+
+pub async fn fetch_workshop_meta(
+    client: &Client,
+    api_url: &str,
+    workshop_id: u64,
+    api_key: Option<&str>,
+) -> Result<WorkshopFileMeta, String> {
+    let body = build_steam_request_body(&[workshop_id], api_key);
+    let response = client
+        .post(api_url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("Steam Web API request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Steam Web API returned HTTP {}", response.status()));
+    }
+
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read Steam API response: {}", e))?;
+
+    let metas = parse_workshop_meta_from_response(&text)?;
+    metas
+        .into_iter()
+        .next()
+        .map(|(_, meta)| meta)
+        .ok_or_else(|| format!("Workshop item {workshop_id} not found on Steam"))
 }
 
 struct WorkshopRegistryInfo {
@@ -317,6 +386,30 @@ mod tests {
             .get(&381419931)
             .unwrap()
             .contains("images.steamusercontent.com"));
+    }
+
+    #[test]
+    fn parse_workshop_meta_reads_title_preview_and_size() {
+        let body = r#"{
+            "response": {
+                "result": 1,
+                "resultcount": 1,
+                "publishedfiledetails": [
+                    {
+                        "publishedfileid": "381419931",
+                        "result": 1,
+                        "title": "  Hard Rain Downpour  ",
+                        "preview_url": "https://example.com/preview.jpg",
+                        "file_size": "12345678"
+                    }
+                ]
+            }
+        }"#;
+        let metas = parse_workshop_meta_from_response(body).expect("parse");
+        let meta = metas.get(&381419931).expect("meta");
+        assert_eq!(meta.title, "Hard Rain Downpour");
+        assert_eq!(meta.preview_url.as_deref(), Some("https://example.com/preview.jpg"));
+        assert_eq!(meta.size_bytes, Some(12_345_678));
     }
 
     #[test]

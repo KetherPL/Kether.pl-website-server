@@ -67,6 +67,11 @@ pub struct WebsiteMapEntry {
     pub downloadUrl: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previewUrl: Option<String>,
+    pub installedAt: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksumKind: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

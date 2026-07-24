@@ -20,6 +20,9 @@ pub fn daemon_entry_to_website(
         source,
         downloadUrl: download_url,
         previewUrl: preview_url,
+        installedAt: entry.installed_at,
+        checksum: entry.checksum.clone(),
+        checksumKind: entry.checksum_kind.clone(),
     }
 }
 
@@ -45,7 +48,7 @@ fn preview_url_for_entry(entry: &DaemonMapEntry, previews: &WorkshopPreviewCache
 mod tests {
     use super::*;
     use crate::maps_bridge::workshop_previews::{PreviewCacheEntry, WorkshopPreviewCache};
-    use chrono::Utc;
+    use chrono::{TimeZone, Utc};
 
     fn workshop_entry(workshop_id: u64) -> DaemonMapEntry {
         DaemonMapEntry {
@@ -74,6 +77,30 @@ mod tests {
             Some("https://steamcommunity.com/sharedfiles/filedetails/?id=381419931")
         );
         assert!(mapped.previewUrl.is_none());
+    }
+
+    #[test]
+    fn carries_installed_at_and_checksum_from_daemon_entry() {
+        let mut entry = workshop_entry(381419931);
+        entry.installed_at = Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap();
+        entry.checksum = Some("abc123".to_string());
+        entry.checksum_kind = Some("md5".to_string());
+        let cache = WorkshopPreviewCache::default();
+
+        let mapped = daemon_entry_to_website(&entry, &cache);
+        assert_eq!(mapped.installedAt, entry.installed_at);
+        assert_eq!(mapped.checksum.as_deref(), Some("abc123"));
+        assert_eq!(mapped.checksumKind.as_deref(), Some("md5"));
+    }
+
+    #[test]
+    fn checksum_fields_absent_when_daemon_entry_has_none() {
+        let entry = workshop_entry(381419931);
+        let cache = WorkshopPreviewCache::default();
+
+        let mapped = daemon_entry_to_website(&entry, &cache);
+        assert!(mapped.checksum.is_none());
+        assert!(mapped.checksumKind.is_none());
     }
 
     #[test]

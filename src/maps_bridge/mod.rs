@@ -12,7 +12,7 @@ mod suggestions;
 mod suggestions_store;
 mod workshop_previews;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -46,7 +46,7 @@ use models::{
 use registry_store::{load_registry, resolve_data_path, save_registry};
 use workshop_previews::{
     load_preview_cache, preview_cache_path_from_registry, refresh_preview_cache,
-    STEAM_PUBLISHED_FILE_DETAILS_URL,
+    WorkshopPreviewCache, STEAM_PUBLISHED_FILE_DETAILS_URL,
 };
 
 pub struct MapsBridgeState {
@@ -451,6 +451,44 @@ impl MapsBridgeState {
             },
         })
     }
+}
+
+/// Minimal, chat-bot-facing representation of an installed map link lookup result.
+pub struct InstalledMapLink {
+    pub map_name: String,
+    pub source: String,
+    pub url: Option<String>,
+}
+
+/// Looks up an installed map in the local registry cache by name (case-insensitive exact
+/// match, falling back to substring match). Synchronous, local-only read — no daemon
+/// round-trip — used by the Steam chat bot's `!plan ... l m <name>` link lookup.
+pub fn find_installed_map_link(
+    base_path: &Path,
+    config: &crate::config::Config,
+    query: &str,
+) -> Option<InstalledMapLink> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let registry_path =
+        resolve_data_path(base_path, &config.server_daemon_registry_path, "maps_registry.json");
+    let registry = load_registry(&registry_path).ok()?;
+    let query_lower = query.to_lowercase();
+
+    let entry = registry
+        .maps
+        .iter()
+        .find(|m| m.name.eq_ignore_ascii_case(query))
+        .or_else(|| registry.maps.iter().find(|m| m.name.to_lowercase().contains(&query_lower)))?;
+
+    let website_entry = daemon_entry_to_website(entry, &WorkshopPreviewCache::default());
+    Some(InstalledMapLink {
+        map_name: website_entry.mapName,
+        source: website_entry.source,
+        url: website_entry.downloadUrl,
+    })
 }
 
 pub struct DaemonSyncAuth;
@@ -999,5 +1037,118 @@ stale_after_secs = 0
             response.maps[0].previewUrl.as_deref(),
             Some("https://images.steamusercontent.com/ugc/test-preview/")
         );
+    }
+
+    fn map_entry(id: u64, name: &str, workshop_id: Option<u64>, source_url: &str) -> DaemonMapEntry {
+        DaemonMapEntry {
+            id,
+            name: name.to_string(),
+            source_url: source_url.to_string(),
+            source_kind: if workshop_id.is_some() {
+                DaemonSourceKind::Workshop
+            } else {
+                DaemonSourceKind::Other
+            },
+            workshop_id,
+            installed_path: format!("{}.vpk", name.to_lowercase().replace(' ', "_")),
+            installed_at: Utc::now(),
+            workshop_updated_at: None,
+            version: None,
+            checksum: None,
+            checksum_kind: None,
+        }
+    }
+
+    fn config_with_registry(registry_path: &std::path::Path) -> Config {
+        Config::from_toml_str(&format!(
+            r#"
+frontend_admins = []
+[server_daemon]
+registry_path = "{}"
+daemon_url = ""
+"#,
+            registry_path.display()
+        ))
+        .expect("config")
+    }
+
+    #[test]
+    fn find_installed_map_link_exact_match_returns_workshop_url() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry_path = dir.path().join("maps_registry.json");
+        save_registry(
+            &registry_path,
+            vec![map_entry(1, "No Mercy", Some(125499071), "")],
+        )
+        .expect("save");
+        let config = config_with_registry(&registry_path);
+
+        let found = find_installed_map_link(dir.path(), &config, "No Mercy").expect("found");
+        assert_eq!(found.map_name, "No Mercy");
+        assert!(found.url.unwrap().contains("125499071"));
+    }
+
+    #[test]
+    fn find_installed_map_link_is_case_insensitive_exact_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry_path = dir.path().join("maps_registry.json");
+        save_registry(
+            &registry_path,
+            vec![map_entry(1, "No Mercy", Some(125499071), "")],
+        )
+        .expect("save");
+        let config = config_with_registry(&registry_path);
+
+        let found = find_installed_map_link(dir.path(), &config, "no mercy").expect("found");
+        assert_eq!(found.map_name, "No Mercy");
+    }
+
+    #[test]
+    fn find_installed_map_link_falls_back_to_substring_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry_path = dir.path().join("maps_registry.json");
+        save_registry(
+            &registry_path,
+            vec![map_entry(
+                1,
+                "Custom Center Map",
+                None,
+                "https://example.com/center.vpk",
+            )],
+        )
+        .expect("save");
+        let config = config_with_registry(&registry_path);
+
+        let found = find_installed_map_link(dir.path(), &config, "center").expect("found");
+        assert_eq!(found.map_name, "Custom Center Map");
+        assert_eq!(found.url.as_deref(), Some("https://example.com/center.vpk"));
+    }
+
+    #[test]
+    fn find_installed_map_link_returns_none_when_no_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry_path = dir.path().join("maps_registry.json");
+        save_registry(
+            &registry_path,
+            vec![map_entry(1, "No Mercy", Some(125499071), "")],
+        )
+        .expect("save");
+        let config = config_with_registry(&registry_path);
+
+        assert!(find_installed_map_link(dir.path(), &config, "Dead Center").is_none());
+    }
+
+    #[test]
+    fn find_installed_map_link_returns_none_for_empty_query() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry_path = dir.path().join("maps_registry.json");
+        save_registry(
+            &registry_path,
+            vec![map_entry(1, "No Mercy", Some(125499071), "")],
+        )
+        .expect("save");
+        let config = config_with_registry(&registry_path);
+
+        assert!(find_installed_map_link(dir.path(), &config, "   ").is_none());
     }
 }

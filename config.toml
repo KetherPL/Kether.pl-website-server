@@ -54,6 +54,14 @@ plan_chat_keep_clean = false
 # If true, planning messages mention the user who executed the command
 plan_mention_user = false
 
+# Dedicated chat room id for !plan ... l map-link messages
+# Uses the same steam.chat.group_id; set to 0 to disable
+plan_map_links_chat_id = 0
+
+# If true, map-link messages are posted only to plan_map_links_chat_id instead of following plan_chat_id
+# If plan_map_links_chat_id is 0, this behaves as disabled
+dedicated_plan_map_links_chat = false
+
 # Dedicated chat room id for poll/question messages (!poll / !q)
 # Uses the same steam.chat.group_id; set to 0 to disable
 poll_chat_id = 0

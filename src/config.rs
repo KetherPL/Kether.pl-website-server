@@ -139,6 +139,14 @@ struct ChatConfig {
 	#[serde(default)]
 	plan_mention_user: bool,
 
+	/// Dedicated chat ID for plan map-link messages (!plan ... l m <map>)
+	#[serde(default)]
+	plan_map_links_chat_id: u64,
+
+	/// Whether dedicated plan map-links chat routing is enabled
+	#[serde(default)]
+	dedicated_plan_map_links_chat: bool,
+
 	/// Dedicated chat ID for poll command responses
 	#[serde(default)]
 	poll_chat_id: u64,
@@ -398,6 +406,8 @@ impl Default for ChatConfig {
 			dedicated_plan_chat: false,
 			plan_chat_keep_clean: false,
 			plan_mention_user: false,
+			plan_map_links_chat_id: 0,
+			dedicated_plan_map_links_chat: false,
 			poll_chat_id: 0,
 			dedicated_poll_chat: false,
 			poll_chat_remove_command_message: false,
@@ -427,6 +437,8 @@ impl Default for ServerConfig {
 /// * `dedicated_plan_chat` - Whether dedicated planning chat routing is enabled
 /// * `plan_chat_keep_clean` - Whether non-bot messages should be removed from dedicated planning chat
 /// * `plan_mention_user` - Whether planning messages mention the executing user
+/// * `plan_map_links_chat_id` - Dedicated chat ID for plan map-link messages
+/// * `dedicated_plan_map_links_chat` - Whether dedicated plan map-links chat routing is enabled
 /// * `poll_chat_id` - Dedicated chat ID for poll responses
 /// * `dedicated_poll_chat` - Whether dedicated poll chat routing is enabled
 /// * `poll_chat_remove_command_message` - Whether poll command messages should be removed after posting polls
@@ -445,6 +457,8 @@ pub struct Config {
 	pub dedicated_plan_chat: bool,
 	pub plan_chat_keep_clean: bool,
 	pub plan_mention_user: bool,
+	pub plan_map_links_chat_id: u64,
+	pub dedicated_plan_map_links_chat: bool,
 	pub poll_chat_id: u64,
 	pub dedicated_poll_chat: bool,
 	pub poll_chat_remove_command_message: bool,
@@ -556,6 +570,8 @@ impl Config {
 			dedicated_plan_chat: config_file.steam.chat.dedicated_plan_chat,
 			plan_chat_keep_clean: config_file.steam.chat.plan_chat_keep_clean,
 			plan_mention_user: config_file.steam.chat.plan_mention_user,
+			plan_map_links_chat_id: config_file.steam.chat.plan_map_links_chat_id,
+			dedicated_plan_map_links_chat: config_file.steam.chat.dedicated_plan_map_links_chat,
 			poll_chat_id: config_file.steam.chat.poll_chat_id,
 			dedicated_poll_chat: config_file.steam.chat.dedicated_poll_chat,
 			poll_chat_remove_command_message: config_file.steam.chat.poll_chat_remove_command_message,
@@ -652,6 +668,12 @@ impl Config {
 		}
 		if self.plan_mention_user != new.plan_mention_user {
 			change.live_applied.push("steam.chat.plan_mention_user");
+		}
+		if self.plan_map_links_chat_id != new.plan_map_links_chat_id {
+			change.live_applied.push("steam.chat.plan_map_links_chat_id");
+		}
+		if self.dedicated_plan_map_links_chat != new.dedicated_plan_map_links_chat {
+			change.live_applied.push("steam.chat.dedicated_plan_map_links_chat");
 		}
 		if self.poll_chat_id != new.poll_chat_id {
 			change.live_applied.push("steam.chat.poll_chat_id");
@@ -801,6 +823,14 @@ plan_chat_keep_clean = false
 
 # If true, planning messages mention the user who executed the command
 plan_mention_user = false
+
+# Dedicated chat room id for !plan ... l map-link messages
+# Uses the same steam.chat.group_id; set to 0 to disable
+plan_map_links_chat_id = 0
+
+# If true, map-link messages are posted only to plan_map_links_chat_id instead of following plan_chat_id
+# If plan_map_links_chat_id is 0, this behaves as disabled
+dedicated_plan_map_links_chat = false
 
 # Dedicated chat room id for poll messages (!poll / !q)
 # Uses the same steam.chat.group_id; set to 0 to disable
@@ -990,6 +1020,16 @@ stale_after_secs = 600
 			.then_some((self.chat_group_id, self.plan_chat_id))
 	}
 
+	/// Returns dedicated plan map-links chat target when feature is enabled and configured.
+	///
+	/// # Returns
+	/// `Some((chat_group_id, plan_map_links_chat_id))` when dedicated plan map-links routing is
+	/// enabled and chat id is set, otherwise `None`.
+	pub fn effective_plan_map_links_chat(&self) -> Option<(u64, u64)> {
+		(self.dedicated_plan_map_links_chat && self.plan_map_links_chat_id != 0)
+			.then_some((self.chat_group_id, self.plan_map_links_chat_id))
+	}
+
 	/// Returns dedicated poll chat target when feature is enabled and configured.
 	///
 	/// # Returns
@@ -1118,6 +1158,8 @@ plan_chat_id = 4321
 dedicated_plan_chat = true
 plan_chat_keep_clean = true
 plan_mention_user = true
+plan_map_links_chat_id = 9999
+dedicated_plan_map_links_chat = true
 poll_chat_id = 8765
 dedicated_poll_chat = true
 poll_chat_remove_command_message = true
@@ -1142,6 +1184,8 @@ ignore_muted_commands = false
 		assert!(parsed.dedicated_plan_chat);
 		assert!(parsed.plan_chat_keep_clean);
 		assert!(parsed.plan_mention_user);
+		assert_eq!(parsed.plan_map_links_chat_id, 9999);
+		assert!(parsed.dedicated_plan_map_links_chat);
 		assert_eq!(parsed.poll_chat_id, 8765);
 		assert!(parsed.dedicated_poll_chat);
 		assert!(parsed.poll_chat_remove_command_message);
@@ -1172,6 +1216,8 @@ ignore_muted_commands = false
 		assert!(!parsed.dedicated_plan_chat);
 		assert!(!parsed.plan_chat_keep_clean);
 		assert!(!parsed.plan_mention_user);
+		assert_eq!(parsed.plan_map_links_chat_id, 0);
+		assert!(!parsed.dedicated_plan_map_links_chat);
 		assert_eq!(parsed.poll_chat_id, 0);
 		assert!(!parsed.dedicated_poll_chat);
 		assert!(!parsed.poll_chat_remove_command_message);
@@ -1226,6 +1272,19 @@ ignore_muted_commands = false
 		config.dedicated_plan_chat = true;
 		config.plan_chat_id = 0;
 		assert_eq!(config.effective_plan_chat(), None);
+	}
+
+	#[test]
+	fn effective_plan_map_links_chat_requires_enabled_and_chat_id() {
+		let mut config = Config::from_toml_str(full_toml()).expect("config");
+		assert_eq!(config.effective_plan_map_links_chat(), Some((1234, 9999)));
+
+		config.dedicated_plan_map_links_chat = false;
+		assert_eq!(config.effective_plan_map_links_chat(), None);
+
+		config.dedicated_plan_map_links_chat = true;
+		config.plan_map_links_chat_id = 0;
+		assert_eq!(config.effective_plan_map_links_chat(), None);
 	}
 
 	#[test]

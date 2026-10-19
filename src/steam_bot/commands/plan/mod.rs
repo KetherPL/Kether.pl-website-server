@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+mod map_link;
 mod mention;
 mod messages;
 mod time;
@@ -24,12 +25,13 @@ struct PlanArgs<'a> {
     server_id: Option<u8>,
     map: Option<String>,
     clear: bool,
+    link: bool,
 }
 
 #[async_trait]
 impl CommandHandler for PlanCommand {
     async fn execute(&self, ctx: &CommandContext<'_>) -> Result<String, CommandError> {
-        Self::execute_plan(ctx.args, Some(ctx.sender_id)).await
+        Self::execute_plan(ctx.args, Some(ctx.sender_id), ctx.chat_group_id, ctx.chat_id).await
     }
 
     fn metadata(&self) -> &CommandMetadata {
@@ -37,7 +39,7 @@ impl CommandHandler for PlanCommand {
             name: "plan",
             aliases: &["p"],
             description: "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-            usage: Some("!plan <time> [1|2] [m <map>] | !plan clear [1|2]"),
+            usage: Some("!plan <time> [1|2] [l] [m <map>] | !plan clear [1|2]"),
         };
         &METADATA
     }
@@ -48,21 +50,21 @@ inventory::submit! {
         "plan",
         &["p"],
         "Sets a L4D2 server lobby plan for a specific time. Formats: 19:00, 18.30, or 16 (CET/CEST)",
-        Some("!plan <time> [1|2] [m <map>] | !plan clear [1|2]"),
+        Some("!plan <time> [1|2] [l] [m <map>] | !plan clear [1|2]"),
         || Box::new(PlanCommand)
     )
 }
 
 impl PlanCommand {
     fn usage_hint() -> &'static str {
-        "!plan <time> [1|2] [m <map>] | !plan clear [1|2]"
+        "!plan <time> [1|2] [l] [m <map>] | !plan clear [1|2]"
     }
 
     fn parse_args(args: &str) -> Result<PlanArgs<'_>, String> {
         let trimmed = args.trim();
         if trimmed.is_empty() {
             return Err(format!(
-                "Usage: {} (e.g., !plan 19:00, !plan 19:00 2, !plan 19:00 m No Mercy, !plan clear, !plan clear 1)",
+                "Usage: {} (e.g., !plan 19:00, !plan 19:00 2, !plan 19:00 m No Mercy, !plan 19:00 l m No Mercy, !plan clear, !plan clear 1)",
                 Self::usage_hint()
             ));
         }
@@ -75,6 +77,7 @@ impl PlanCommand {
                     server_id: None,
                     map: None,
                     clear: true,
+                    link: false,
                 })
             }
             [c, sid] if c.eq_ignore_ascii_case("clear") || c.eq_ignore_ascii_case("c") => {
@@ -93,11 +96,13 @@ impl PlanCommand {
                     server_id: Some(server_id),
                     map: None,
                     clear: true,
+                    link: false,
                 })
             }
             [time_str, rest @ ..] => {
                 let mut server_id = None;
                 let mut map = None;
+                let mut link = false;
                 let mut index = 0usize;
 
                 while index < rest.len() {
@@ -119,6 +124,12 @@ impl PlanCommand {
                         continue;
                     }
 
+                    if (token.eq_ignore_ascii_case("l") || token.eq_ignore_ascii_case("link")) && !link {
+                        link = true;
+                        index += 1;
+                        continue;
+                    }
+
                     return if parse_time_string(time_str).is_ok() {
                         Err(format!("Invalid server id. Usage: {}", Self::usage_hint()))
                     } else {
@@ -129,11 +140,19 @@ impl PlanCommand {
                     };
                 }
 
+                if link && map.is_none() {
+                    return Err(format!(
+                        "The 'l' flag requires 'm <map>'. Usage: {}",
+                        Self::usage_hint()
+                    ));
+                }
+
                 Ok(PlanArgs {
                     time_str,
                     server_id,
                     map,
                     clear: false,
+                    link,
                 })
             }
             [] => Err(format!("Invalid arguments. Usage: {}", Self::usage_hint())),
@@ -170,7 +189,12 @@ impl PlanCommand {
         None
     }
 
-    async fn execute_plan(args: &str, actor: Option<u64>) -> Result<String, CommandError> {
+    async fn execute_plan(
+        args: &str,
+        actor: Option<u64>,
+        chat_group_id: u64,
+        chat_id: u64,
+    ) -> Result<String, CommandError> {
         let parsed_args =
             Self::parse_args(args).map_err(CommandError::InvalidArguments)?;
 
@@ -200,6 +224,14 @@ impl PlanCommand {
             },
             None => None,
         };
+
+        // Post the map link before the already-planned dedup return so `l` still
+        // works when the time is already reserved.
+        if parsed_args.link {
+            if let Some(map_name) = parsed_args.map.as_deref() {
+                map_link::post_map_link(map_name, chat_group_id, chat_id).await;
+            }
+        }
 
         #[cfg(feature = "rest_api")]
         {
@@ -383,5 +415,51 @@ mod tests {
     fn test_plan_args_map_requires_name() {
         let err = PlanCommand::parse_args("19:00 m").unwrap_err();
         assert!(err.contains("Map name is required"));
+    }
+
+    #[test]
+    fn test_plan_args_link_before_map() {
+        let args = PlanCommand::parse_args("19:00 l m No Mercy").unwrap();
+        assert!(!args.clear);
+        assert!(args.link);
+        assert!(args.server_id.is_none());
+        assert_eq!(args.map.as_deref(), Some("No Mercy"));
+    }
+
+    #[test]
+    fn test_plan_args_link_after_server_id() {
+        let args = PlanCommand::parse_args("19:00 1 l m No Mercy").unwrap();
+        assert!(!args.clear);
+        assert!(args.link);
+        assert_eq!(args.server_id, Some(1));
+        assert_eq!(args.map.as_deref(), Some("No Mercy"));
+    }
+
+    #[test]
+    fn test_plan_args_link_before_server_id() {
+        let args = PlanCommand::parse_args("19:00 l 1 m No Mercy").unwrap();
+        assert!(!args.clear);
+        assert!(args.link);
+        assert_eq!(args.server_id, Some(1));
+        assert_eq!(args.map.as_deref(), Some("No Mercy"));
+    }
+
+    #[test]
+    fn test_plan_args_link_long_form() {
+        let args = PlanCommand::parse_args("19:00 link m No Mercy").unwrap();
+        assert!(args.link);
+        assert_eq!(args.map.as_deref(), Some("No Mercy"));
+    }
+
+    #[test]
+    fn test_plan_args_link_without_map_is_error() {
+        let err = PlanCommand::parse_args("19:00 l").unwrap_err();
+        assert!(err.contains("requires 'm <map>'"));
+    }
+
+    #[test]
+    fn test_plan_args_no_link_defaults_false() {
+        let args = PlanCommand::parse_args("19:00 m No Mercy").unwrap();
+        assert!(!args.link);
     }
 }

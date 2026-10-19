@@ -24,6 +24,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
         *   **`!plan` / `!p`** — schedule a lobby time (CET/CEST; formats `19:00`, `18.30`, or `16`). Optional server `1`/`2`, optional map via `m`/`map` (e.g. `!plan 19:00 m No Mercy`). `!plan clear [1|2]` clears reservations. Supports per-server targeting, replan detection, and optional user mentions.
         *   **`!poll` / `!q`** — yes/no polls (thumb reactions) or multi-choice polls (`-o` options, up to 10, `:steamthis:` reactions on each choice). A single `-o` posts question + option without reactions.
         *   **`!status` / `!s`** — query configured L4D2 server(s) for live info (`server_query` feature). Optional `1`/`2` and `full`/`f` for detailed player lists.
+        *   **`!maps`** — list installed maps grouped by source (`maps_bridge` feature), read from the local registry cache. Optional filters: `c` (L4D2Center), `s` (SirPlease), `w` (Workshop), `o` (Other), `S` (pending map suggestions); several can be combined (e.g. `!maps c w`). No filter lists everything.
         *   **`!help` / `!h`** — list available bot commands.
         *   **`!mute`** — admin-only: mute a user by mention; auto-deletes their messages globally until expiry. Duration: minutes (default 45), `h` for hours (e.g. `1:30` = 1h 30m; default 1), or `d` for days (default 1). Max duration configurable via `steam.chat.admin.mute_max_minutes` (default 7 days).
         *   **`!unmute`** — admin-only: remove a mute from a mentioned user.

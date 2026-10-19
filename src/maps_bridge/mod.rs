@@ -491,6 +491,50 @@ pub fn find_installed_map_link(
     })
 }
 
+/// Chat-bot-facing snapshot of installed maps (with their source labels) and pending map
+/// suggestions. Built from local files only — no daemon round-trip.
+pub struct ChatMapsListing {
+    /// `(source label, map name)` pairs, where the label matches the website's source names
+    /// ("L4D2Center", "SirPlease", "Workshop", "Other").
+    pub installed: Vec<(String, String)>,
+    /// Titles of pending map suggestions.
+    pub suggestions: Vec<String>,
+}
+
+/// Reads the local maps registry cache and the map suggestions store for the Steam chat bot's
+/// `!maps` command. A missing/unreadable suggestions store is treated as empty.
+pub fn list_maps_for_chat(
+    base_path: &Path,
+    config: &crate::config::Config,
+) -> Result<ChatMapsListing, String> {
+    let registry_path =
+        resolve_data_path(base_path, &config.server_daemon_registry_path, "maps_registry.json");
+    let registry = load_registry(&registry_path)?;
+
+    let installed = registry
+        .maps
+        .iter()
+        .map(|entry| {
+            (
+                models::daemon_source_to_website(entry.source_kind).to_string(),
+                entry.name.clone(),
+            )
+        })
+        .collect();
+
+    let suggestions = suggestions_store::SuggestionsStore::new(
+        suggestions_store::SuggestionsStore::path_from_registry(&registry_path),
+    )
+    .list()
+    .map(|items| items.into_iter().map(|s| s.title).collect())
+    .unwrap_or_else(|e| {
+        eprintln!("!maps: failed to load map suggestions (treating as empty): {}", e);
+        Vec::new()
+    });
+
+    Ok(ChatMapsListing { installed, suggestions })
+}
+
 pub struct DaemonSyncAuth;
 
 #[rocket::async_trait]

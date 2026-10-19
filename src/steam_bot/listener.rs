@@ -479,6 +479,11 @@ async fn wait_before_retry() {
 /// * `None` - If bot is not mentioned or no command found
 fn process_message(message: &EnhancedGroupChatMessage, bot_steam_id_u64: u64) -> Option<String> {
     let sender_id = u64::from(message.sender_steam_id);
+    // Never treat the bot's own messages as commands: command replies can start with
+    // `!<name>` (e.g. `!help maps` -> "!maps  Lists ..."), which would re-trigger that command.
+    if sender_id == bot_steam_id_u64 {
+        return None;
+    }
     let config = registry::config();
     if config.steambot_ignore_muted_commands && mute::is_muted(sender_id) {
         return None;

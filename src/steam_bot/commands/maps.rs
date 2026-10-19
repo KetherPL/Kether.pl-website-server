@@ -122,7 +122,7 @@ impl MapsCommand {
         if sections.is_empty() {
             return "No installed maps found.".to_string();
         }
-        format!("Installed maps:\n{}", sections.join("\n\n"))
+        format!("Installed maps:\n\n{}", sections.join("\n\n"))
     }
 }
 
@@ -246,7 +246,7 @@ mod tests {
         let out = MapsCommand::format_listing(&installed(), &suggestions, None);
         assert_eq!(
             out,
-            "Installed maps:\n\
+            "Installed maps:\n\n\
              [L4D2Center]\n1. another map\n2. Some map\n3. yet another map\n\n\
              [Workshop]\n1. a different map\n2. An old but loved map\n3. some nice map\n\n\
              [Suggestions]\n1. Aaa\n2. Zzz"
@@ -259,7 +259,7 @@ mod tests {
         let out = MapsCommand::format_listing(&installed(), &[], Some(&filter));
         assert_eq!(
             out,
-            "Installed maps:\n\
+            "Installed maps:\n\n\
              [SirPlease]\n(none)\n\n\
              [Workshop]\n1. a different map\n2. An old but loved map\n3. some nice map"
         );

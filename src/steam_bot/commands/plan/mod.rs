@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-mod map_link;
 mod mention;
 mod messages;
 mod time;
@@ -229,7 +228,7 @@ impl PlanCommand {
         // works when the time is already reserved.
         if parsed_args.link {
             if let Some(map_name) = parsed_args.map.as_deref() {
-                map_link::post_map_link(map_name, chat_group_id, chat_id).await;
+                super::map::post_map_link(map_name, chat_group_id, chat_id).await;
             }
         }
 

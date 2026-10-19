@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crate::steam_bot::registry;
 
 mod help;
+mod map;
 mod mute;
 mod plan;
 mod poll;
@@ -371,6 +372,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"!help".to_string()) || names.contains(&"!h".to_string()));
         assert!(names.contains(&"!plan".to_string()) || names.contains(&"!p".to_string()));
+        assert!(names.contains(&"!map".to_string()) || names.contains(&"!m".to_string()));
     }
 
     #[test]

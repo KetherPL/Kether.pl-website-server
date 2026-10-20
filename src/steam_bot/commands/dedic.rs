@@ -3,8 +3,6 @@
 use super::{CommandContext, CommandError, CommandHandler, CommandInfo, CommandMetadata};
 use crate::steam_bot::registry;
 use async_trait::async_trait;
-use SC_Sub_Poster::preprocessing::BBCODE_TYPE_PRE;
-use SC_Sub_Poster::preprocessing_helpers::format_with_bbcode;
 
 const DEDIC_USAGE: &str = "!dedic [1|2] | !d [1|2]";
 const DEDIC_DESCRIPTION: &str =
@@ -44,13 +42,10 @@ impl DedicCommand {
             })
     }
 
-    /// Builds the reply: the console command wrapped in Steam chat's `[pre]` (`/pre`) block.
+    /// Builds the reply as a `/pre` slash command. Steam's chat server (not the client) turns
+    /// `/pre <text>` into a `[pre]` block; raw `[pre]...[/pre]` sent by us is not rendered.
     fn format_reply(ip: &str, port: u16) -> String {
-        format_with_bbcode(
-            &format!("mm_dedicated_force_servers {}:{}", ip, port),
-            BBCODE_TYPE_PRE,
-            "",
-        )
+        format!("/pre mm_dedicated_force_servers {}:{}", ip, port)
     }
 }
 
@@ -146,10 +141,10 @@ chat_id = 5678
     }
 
     #[test]
-    fn reply_is_wrapped_in_pre() {
+    fn reply_is_a_pre_slash_command() {
         assert_eq!(
             DedicCommand::format_reply("1.2.3.4", 27015),
-            "[pre]mm_dedicated_force_servers 1.2.3.4:27015[/pre]"
+            "/pre mm_dedicated_force_servers 1.2.3.4:27015"
         );
     }
 }

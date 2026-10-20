@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use SC_Sub_Poster::preprocessing_helpers::mention_all;
+
 pub(super) struct PlanMessageContext {
     pub time_str: String,
     pub actor_mention: Option<String>,
@@ -50,6 +52,7 @@ pub(super) fn format_clear_response(actor_mention: Option<&str>, result: ClearRe
 }
 
 fn format_plan_body(ctx: &PlanMessageContext) -> String {
+    let all = mention_all();
     if let Some(server_id) = ctx.server_id {
         let server_ip = ctx
             .server_ip
@@ -75,11 +78,11 @@ fn format_plan_body(ctx: &PlanMessageContext) -> String {
 
             return match ctx.server_name.as_deref() {
                 Some(server_name) => format!(
-                    "{} planned lobby time at {} for server {} [mention=all]@all[/mention]\nServer: {} | IP: {}:{}",
+                    "{} planned lobby time at {} for server {} {all}\nServer: {} | IP: {}:{}",
                     actor_mention, ctx.time_str, server_id, server_name, server_ip, server_port
                 ),
                 None => format!(
-                    "{} planned lobby time at {} for server {} [mention=all]@all[/mention]\nServer IP: {}:{}",
+                    "{} planned lobby time at {} for server {} {all}\nServer IP: {}:{}",
                     actor_mention, ctx.time_str, server_id, server_ip, server_port
                 ),
             };
@@ -100,11 +103,11 @@ fn format_plan_body(ctx: &PlanMessageContext) -> String {
 
         return match ctx.server_name.as_deref() {
             Some(server_name) => format!(
-                "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer: {} | IP: {}:{}",
+                "Planned lobby time for server {}: {} {all}\nServer: {} | IP: {}:{}",
                 server_id, ctx.time_str, server_name, server_ip, server_port
             ),
             None => format!(
-                "Planned lobby time for server {}: {} [mention=all]@all[/mention]\nServer IP: {}:{}",
+                "Planned lobby time for server {}: {} {all}\nServer IP: {}:{}",
                 server_id, ctx.time_str, server_ip, server_port
             ),
         };
@@ -115,7 +118,7 @@ fn format_plan_body(ctx: &PlanMessageContext) -> String {
             format!("{} re-planned lobby time at {}", actor_mention, ctx.time_str)
         } else {
             format!(
-                "{} planned lobby time at {} [mention=all]@all[/mention]",
+                "{} planned lobby time at {} {all}",
                 actor_mention, ctx.time_str
             )
         }
@@ -123,7 +126,7 @@ fn format_plan_body(ctx: &PlanMessageContext) -> String {
         format!("Re-planned lobby time: {}", ctx.time_str)
     } else {
         format!(
-            "Planned lobby time: {} [mention=all]@all[/mention]",
+            "Planned lobby time: {} {all}",
             ctx.time_str
         )
     }

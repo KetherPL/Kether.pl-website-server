@@ -2,6 +2,7 @@
 
 use rocket::{http::Status, post, routes, serde::json::Json, State};
 use steam_rs::{steam_id::SteamId, Steam};
+use SC_Sub_Poster::preprocessing_helpers::{mention_account_id, mention_here};
 use rocket::serde::Deserialize;
 use crate::steam_bot::{SteamBot, registry::ConfigHandle};
 use colored::Colorize;
@@ -102,12 +103,12 @@ fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<crate::config
 /// 
 /// # Message Format
 /// The sent message follows this format:
-/// `[mention=ACCOUNT_ID]@PLAYER_NAME[/mention] called for a sub, [mention=here]@online[/mention]`
+/// `[mention=ACCOUNT_ID]@PLAYER_NAME[/mention] called for a sub, [mention=here]@here[/mention]`
 /// 
 /// Where:
 /// * `ACCOUNT_ID` - The Steam account ID (32-bit)
-/// * `PLAYER_NAME` - The player's Steam display name
-/// * `@online` - Mentions all online members in the group
+/// * `PLAYER_NAME` - The player's Steam display name (BBCode-escaped)
+/// * `@here` - Mentions all online members in the group
 #[post("/", data = "<payload>")]
 pub async fn call_for_sub(payload: Json<CallForSubPayload>, config: &State<ConfigHandle>) -> Result<(), Status> {
 	let config = config_snapshot(config);
@@ -153,7 +154,11 @@ pub async fn call_for_sub(payload: Json<CallForSubPayload>, config: &State<Confi
     // println!("Call for sub from: {}", caller_name.clone()?);
     let acc_id = SteamId::get_account_id(&steam_id_parsed);
     // println!("Account ID: {}", acc_id);
-	let sub_msg: String = format!("[mention={}]@{}[/mention] called for a sub, [mention=here]@online[/mention]", acc_id, caller_name?);
+	let sub_msg: String = format!(
+		"{} called for a sub, {}",
+		mention_account_id(acc_id as u32, &caller_name?),
+		mention_here()
+	);
     // println!("Message: {}", sub_msg);
 	match SteamBot::send_message_global(&sub_msg).await {
 		Ok(()) => println!("Call for sub message sent successfully"),

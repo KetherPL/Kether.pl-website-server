@@ -11,6 +11,7 @@ mod help;
 mod map;
 mod mapinfo;
 mod maps;
+mod mention;
 mod mute;
 mod plan;
 mod poll;

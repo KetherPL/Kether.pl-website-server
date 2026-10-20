@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::steam_bot::commands::mention::user_mention;
 use crate::steam_bot::registry;
-use steam_rs::{steam_id::SteamId, Steam};
 
 pub(super) async fn poll_actor_mention(actor: Option<u64>) -> Option<String> {
-    let Some(actor_steam_id_u64) = actor else {
-        return None;
-    };
+    let actor_steam_id_u64 = actor?;
 
     let config = registry::config();
     if !config.poll_mention_user {
@@ -19,25 +17,5 @@ pub(super) async fn poll_actor_mention(actor: Option<u64>) -> Option<String> {
         return None;
     }
 
-    let steam = Steam::new(&config.steam_web_api_key);
-    let actor_steam_id = SteamId::new(actor_steam_id_u64);
-    let caller_name = match tokio::time::timeout(
-        tokio::time::Duration::from_millis(800),
-        steam.get_player_summaries(vec![actor_steam_id]),
-    )
-    .await
-    {
-        Ok(Ok(response)) => response.first().map(|player| player.persona_name.clone()),
-        Ok(Err(e)) => {
-            eprintln!("Failed to resolve poll caller name for mention: {}", e);
-            None
-        }
-        Err(_) => {
-            eprintln!("Timed out resolving poll caller name for mention");
-            None
-        }
-    }?;
-
-    let account_id = actor_steam_id.get_account_id();
-    Some(format!("[mention={}]@{}[/mention]", account_id, caller_name))
+    user_mention(actor_steam_id_u64, &config.steam_web_api_key, "poll caller").await
 }

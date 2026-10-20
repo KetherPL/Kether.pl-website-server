@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use crate::steam_bot::registry;
 
+mod dedic;
 mod help;
 mod map;
 mod mapinfo;

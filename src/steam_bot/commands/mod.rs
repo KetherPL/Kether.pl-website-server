@@ -8,6 +8,7 @@ use crate::steam_bot::registry;
 
 mod help;
 mod map;
+mod mapinfo;
 mod maps;
 mod mute;
 mod plan;

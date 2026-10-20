@@ -468,6 +468,56 @@ pub fn find_installed_map_link(
     config: &crate::config::Config,
     query: &str,
 ) -> Option<InstalledMapLink> {
+    let entry = find_installed_registry_entry(base_path, config, query)?;
+    let website_entry = daemon_entry_to_website(&entry, &WorkshopPreviewCache::default());
+    Some(InstalledMapLink {
+        map_name: website_entry.mapName,
+        source: website_entry.source,
+        url: website_entry.downloadUrl,
+    })
+}
+
+/// Chat-bot-facing details of a single installed map (`!mapinfo`).
+pub struct InstalledMapInfo {
+    pub map_name: String,
+    pub source: String,
+    pub checksum: Option<String>,
+    pub checksum_kind: Option<String>,
+    pub workshop_updated_at: Option<chrono::DateTime<Utc>>,
+    pub installed_at: chrono::DateTime<Utc>,
+    pub workshop_id: Option<u64>,
+    /// Source/download URL (source URL, or the workshop page when only an ID is known).
+    pub url: Option<String>,
+}
+
+/// Looks up an installed map by name (same matching as [`find_installed_map_link`]) and returns
+/// its details. Local registry read only — no daemon round-trip.
+pub fn find_installed_map_info(
+    base_path: &Path,
+    config: &crate::config::Config,
+    query: &str,
+) -> Option<InstalledMapInfo> {
+    let entry = find_installed_registry_entry(base_path, config, query)?;
+    let website_entry = daemon_entry_to_website(&entry, &WorkshopPreviewCache::default());
+    Some(InstalledMapInfo {
+        map_name: entry.name,
+        source: website_entry.source,
+        checksum: entry.checksum,
+        checksum_kind: entry.checksum_kind,
+        workshop_updated_at: entry.workshop_updated_at,
+        installed_at: entry.installed_at,
+        workshop_id: entry.workshop_id,
+        url: website_entry.downloadUrl,
+    })
+}
+
+/// Finds an installed map in the local registry cache by name: case-insensitive exact match,
+/// falling back to the first case-insensitive substring match.
+fn find_installed_registry_entry(
+    base_path: &Path,
+    config: &crate::config::Config,
+    query: &str,
+) -> Option<DaemonMapEntry> {
     let query = query.trim();
     if query.is_empty() {
         return None;
@@ -477,18 +527,17 @@ pub fn find_installed_map_link(
     let registry = load_registry(&registry_path).ok()?;
     let query_lower = query.to_lowercase();
 
-    let entry = registry
+    let index = registry
         .maps
         .iter()
-        .find(|m| m.name.eq_ignore_ascii_case(query))
-        .or_else(|| registry.maps.iter().find(|m| m.name.to_lowercase().contains(&query_lower)))?;
-
-    let website_entry = daemon_entry_to_website(entry, &WorkshopPreviewCache::default());
-    Some(InstalledMapLink {
-        map_name: website_entry.mapName,
-        source: website_entry.source,
-        url: website_entry.downloadUrl,
-    })
+        .position(|m| m.name.eq_ignore_ascii_case(query))
+        .or_else(|| {
+            registry
+                .maps
+                .iter()
+                .position(|m| m.name.to_lowercase().contains(&query_lower))
+        })?;
+    registry.maps.into_iter().nth(index)
 }
 
 /// Chat-bot-facing snapshot of installed maps (with their source labels) and pending map

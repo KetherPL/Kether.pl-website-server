@@ -25,6 +25,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
         *   **`!poll` / `!q`** — yes/no polls (thumb reactions) or multi-choice polls (`-o` options, up to 10, `:steamthis:` reactions on each choice). A single `-o` posts question + option without reactions.
         *   **`!status` / `!s`** — query configured L4D2 server(s) for live info (`server_query` feature). Optional `1`/`2` and `full`/`f` for detailed player lists.
         *   **`!maps`** — list installed maps grouped by source (`maps_bridge` feature), read from the local registry cache. Optional filters: `c` (L4D2Center), `s` (SirPlease), `w` (Workshop), `o` (Other), `S` (pending map suggestions); several can be combined (e.g. `!maps c w`). No filter lists everything.
+        *   **`!mapinfo` / `!mi`** — show an installed map's checksum (with its type), last update time (installation time if unknown, CET/CEST) and workshop ID (or source URL for non-workshop maps). Name matching is case-insensitive, exact first, then substring.
         *   **`!help` / `!h`** — list available bot commands.
         *   **`!mute`** — admin-only: mute a user by mention; auto-deletes their messages globally until expiry. Duration: minutes (default 45), `h` for hours (e.g. `1:30` = 1h 30m; default 1), or `d` for days (default 1). Max duration configurable via `steam.chat.admin.mute_max_minutes` (default 7 days).
         *   **`!unmute`** — admin-only: remove a mute from a mentioned user.

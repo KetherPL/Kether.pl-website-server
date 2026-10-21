@@ -52,6 +52,12 @@ mod plan_ws;
 #[cfg(feature = "auth")]
 mod auth;
 
+#[cfg(feature = "auth")]
+mod admin_rest;
+
+#[cfg(feature = "rest_api")]
+mod control;
+
 #[cfg(feature = "maps_bridge")]
 mod maps_bridge;
 
@@ -176,6 +182,8 @@ async fn await_service_shutdown(
 /// ```
 #[tokio::main]
 async fn main() {
+	#[cfg(feature = "rest_api")]
+	control::mark_process_started();
 	let args = Args::parse();
 
 	#[cfg(feature = "rest_api")]
@@ -183,6 +191,8 @@ async fn main() {
 		println!("Starting internal services server service");
 		let (daemon_command_tx, mut daemon_command_rx) =
 			mpsc::unbounded_channel::<repl::DaemonCommand>();
+		// Lets the admin panel (`POST /api/admin/restart/backend`) request the same restart as the REPL.
+		control::set_command_sender(daemon_command_tx.clone());
 		#[cfg(feature = "hot_reload")]
 		let _config_watcher = {
 			let handle = steam_bot::registry::config_handle();
@@ -211,6 +221,7 @@ async fn main() {
 
 		let mut running = true;
 		while running {
+			control::mark_services_started();
 			let (service_shutdown_tx, _) = broadcast::channel::<()>(1);
 			let rest_shutdown = service_shutdown_tx.subscribe();
 			#[cfg(feature = "rest_call_for_sub")]

@@ -122,7 +122,8 @@ pub async fn build_rocket() -> Rocket<Build> {
 	{
 		rocket_build = rocket_build
 			.manage(crate::auth::ExchangeCodeStore::new())
-			.mount("/api/auth", crate::auth::mount_auth_routes());
+			.mount("/api/auth", crate::auth::mount_auth_routes())
+			.mount("/api/admin", crate::admin_rest::mount_admin_routes());
 	}
 	#[cfg(feature = "server_query")]
 	{

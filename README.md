@@ -291,6 +291,16 @@ After closing the REPL, press **`C`** again to reopen it.
 
 Restart reloads `config.toml` from disk and re-initializes the SteamBot (new login, chat IDs, etc.). Use this after changing bot credentials or chat configuration.
 
+### Admin panel API
+
+The website's **Admin Panel** page (visible to `frontend_admins` only) uses these routes. All of them require an admin session; the restart routes also pass the CSRF Origin check.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/admin/status` | Backend version/PID/uptime and the KetherServerDaemon's status (via `[server_daemon].daemon_url`) |
+| POST | `/api/admin/restart/backend` | Same in-process restart as the REPL `restart` command |
+| POST | `/api/admin/restart/daemon?force=<bool>` | Asks the daemon to restart itself (needs a daemon with `/api/daemon/restart`; 409 while it is busy unless forced) |
+
 ## JSON Database Structure
 
 The server uses three JSON files for data storage:

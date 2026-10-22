@@ -19,6 +19,7 @@ struct MapInfo {
     installed_at: DateTime<Utc>,
     workshop_id: Option<u64>,
     url: Option<String>,
+    size_bytes: Option<u64>,
 }
 
 #[cfg(feature = "maps_bridge")]
@@ -33,6 +34,7 @@ impl From<crate::maps_bridge::InstalledMapInfo> for MapInfo {
             installed_at: info.installed_at,
             workshop_id: info.workshop_id,
             url: info.url,
+            size_bytes: info.size_bytes,
         }
     }
 }
@@ -57,6 +59,21 @@ impl MapInfoCommand {
         time.with_timezone(&Warsaw).format("%Y-%m-%d %H:%M %Z").to_string()
     }
 
+    /// Human-readable size with 1024-based units, matching the website's formatting.
+    fn format_size(bytes: u64) -> String {
+        const KB: f64 = 1024.0;
+        let b = bytes as f64;
+        if b < KB {
+            format!("{} B", bytes)
+        } else if b < KB * KB {
+            format!("{:.1} KB", b / KB)
+        } else if b < KB * KB * KB {
+            format!("{:.1} MB", b / (KB * KB))
+        } else {
+            format!("{:.2} GB", b / (KB * KB * KB))
+        }
+    }
+
     fn format_info(info: &MapInfo) -> String {
         let non_empty = |value: &Option<String>| {
             value
@@ -72,6 +89,11 @@ impl MapInfoCommand {
             (None, _) => "Checksum: n/a".to_string(),
         };
 
+        let size_line = match info.size_bytes {
+            Some(bytes) => format!("Size: {}", Self::format_size(bytes)),
+            None => "Size: n/a".to_string(),
+        };
+
         let time_line = match info.workshop_updated_at {
             Some(updated) => format!("Last updated: {}", Self::format_time(updated)),
             None => format!("Installed: {}", Self::format_time(info.installed_at)),
@@ -84,8 +106,8 @@ impl MapInfoCommand {
         };
 
         format!(
-            "{} ({})\n{}\n{}\n{}",
-            info.map_name, info.source, checksum_line, time_line, id_line
+            "{} ({})\n{}\n{}\n{}\n{}",
+            info.map_name, info.source, checksum_line, size_line, time_line, id_line
         )
     }
 }
@@ -154,7 +176,16 @@ mod tests {
             installed_at: Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap(),
             workshop_id: Some(381419931),
             url: Some("https://steamcommunity.com/sharedfiles/filedetails/?id=381419931".to_string()),
+            size_bytes: Some(1_288_490_189),
         }
+    }
+
+    #[test]
+    fn format_size_uses_binary_units() {
+        assert_eq!(MapInfoCommand::format_size(512), "512 B");
+        assert_eq!(MapInfoCommand::format_size(1536), "1.5 KB");
+        assert_eq!(MapInfoCommand::format_size(250 * 1024 * 1024), "250.0 MB");
+        assert_eq!(MapInfoCommand::format_size(1_288_490_189), "1.20 GB");
     }
 
     #[test]
@@ -172,6 +203,7 @@ mod tests {
             MapInfoCommand::format_info(&workshop_info()),
             "Some Map (Workshop)\n\
              Checksum (md5): abc123\n\
+             Size: 1.20 GB\n\
              Last updated: 2026-07-01 21:03 CEST\n\
              Workshop ID: 381419931"
         );
@@ -191,6 +223,7 @@ mod tests {
             MapInfoCommand::format_info(&info),
             "Some Map (L4D2Center)\n\
              Checksum (unknown type): abc123\n\
+             Size: 1.20 GB\n\
              Installed: 2026-01-01 13:00 CET\n\
              URL: https://example.com/map.zip"
         );
@@ -204,10 +237,12 @@ mod tests {
             checksum_kind: None,
             workshop_id: None,
             url: Some("  ".to_string()),
+            size_bytes: None,
             ..workshop_info()
         };
         let out = MapInfoCommand::format_info(&info);
         assert!(out.contains("\nChecksum: n/a\n"));
+        assert!(out.contains("\nSize: n/a\n"));
         assert!(out.ends_with("\nURL: n/a"));
     }
 }

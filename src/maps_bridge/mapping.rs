@@ -23,6 +23,7 @@ pub fn daemon_entry_to_website(
         installedAt: entry.installed_at,
         checksum: entry.checksum.clone(),
         checksumKind: entry.checksum_kind.clone(),
+        sizeBytes: entry.size_bytes,
     }
 }
 
@@ -63,7 +64,32 @@ mod tests {
             version: None,
             checksum: None,
             checksum_kind: None,
+            size_bytes: None,
         }
+    }
+
+    #[test]
+    fn size_bytes_flows_from_daemon_json_to_website_entry() {
+        let with_size: DaemonMapEntry = rocket::serde::json::from_str(
+            r#"{"id":7,"name":"Map","source_url":"","source_kind":"workshop","workshop_id":1,
+                "installed_path":"map.vpk","installed_at":"2026-01-01T00:00:00Z","size_bytes":123456}"#,
+        )
+        .expect("daemon entry with size");
+        assert_eq!(with_size.size_bytes, Some(123456));
+        let website = daemon_entry_to_website(&with_size, &WorkshopPreviewCache::default());
+        assert_eq!(website.sizeBytes, Some(123456));
+        let json = rocket::serde::json::to_string(&website).unwrap();
+        assert!(json.contains("\"sizeBytes\":123456"));
+
+        // Older daemons don't send the field.
+        let without_size: DaemonMapEntry = rocket::serde::json::from_str(
+            r#"{"id":7,"name":"Map","source_url":"","source_kind":"workshop",
+                "installed_path":"map.vpk","installed_at":"2026-01-01T00:00:00Z"}"#,
+        )
+        .expect("daemon entry without size");
+        assert_eq!(without_size.size_bytes, None);
+        let website = daemon_entry_to_website(&without_size, &WorkshopPreviewCache::default());
+        assert!(!rocket::serde::json::to_string(&website).unwrap().contains("sizeBytes"));
     }
 
     #[test]
@@ -137,6 +163,7 @@ mod tests {
             version: None,
             checksum: None,
             checksum_kind: None,
+            size_bytes: None,
         };
 
         let mut cache = WorkshopPreviewCache::default();

@@ -488,6 +488,8 @@ pub struct InstalledMapInfo {
     pub workshop_id: Option<u64>,
     /// Source/download URL (source URL, or the workshop page when only an ID is known).
     pub url: Option<String>,
+    /// Size on disk, as last reported by the daemon.
+    pub size_bytes: Option<u64>,
 }
 
 /// Looks up an installed map by name (same matching as [`find_installed_map_link`]) and returns
@@ -508,6 +510,7 @@ pub fn find_installed_map_info(
         installed_at: entry.installed_at,
         workshop_id: entry.workshop_id,
         url: website_entry.downloadUrl,
+        size_bytes: entry.size_bytes,
     })
 }
 
@@ -1050,6 +1053,7 @@ daemon_url = ""
             version: None,
             checksum: None,
             checksum_kind: None,
+            size_bytes: None,
         };
 
         save_registry(&registry_path, vec![entry]).expect("save");
@@ -1095,6 +1099,7 @@ stale_after_secs = 0
             version: None,
             checksum: None,
             checksum_kind: None,
+            size_bytes: None,
         };
 
         save_registry(&registry_path, vec![entry]).expect("save");
@@ -1149,6 +1154,7 @@ stale_after_secs = 0
             version: None,
             checksum: None,
             checksum_kind: None,
+            size_bytes: None,
         }
     }
 

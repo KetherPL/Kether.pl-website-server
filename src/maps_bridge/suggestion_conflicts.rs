@@ -132,6 +132,7 @@ mod tests {
             version: None,
             checksum: None,
             checksum_kind: None,
+            size_bytes: None,
         }
     }
 

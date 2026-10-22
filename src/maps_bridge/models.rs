@@ -33,6 +33,10 @@ pub struct DaemonMapEntry {
     pub checksum: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checksum_kind: Option<String>,
+    /// Size of the installed file on disk, as last reported by the daemon (not stored in the
+    /// daemon's own registry; older daemons don't send it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +76,8 @@ pub struct WebsiteMapEntry {
     pub checksum: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checksumKind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sizeBytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +115,8 @@ pub struct AdminMapDetailResponse {
     pub checksum: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checksum_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 impl From<DaemonMapEntry> for AdminMapDetailResponse {
@@ -124,6 +132,7 @@ impl From<DaemonMapEntry> for AdminMapDetailResponse {
             version: entry.version,
             checksum: entry.checksum,
             checksum_kind: entry.checksum_kind,
+            size_bytes: entry.size_bytes,
         }
     }
 }

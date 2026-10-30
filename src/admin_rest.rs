@@ -54,6 +54,25 @@ pub struct DaemonReport {
 	pub error: Option<String>,
 }
 
+/// Mirrors the daemon's game server status payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct GameServerStatus {
+	pub service: String,
+	pub active_state: String,
+	pub active_state_raw: String,
+	pub sub_state: String,
+	pub description: String,
+	pub main_pid: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct GameServerActionResult {
+	pub action: String,
+	pub status: GameServerStatus,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(crate = "rocket::serde")]
 pub struct AdminStatus {
@@ -257,14 +276,147 @@ pub fn options_admin_restart_daemon() -> Status {
 	Status::Ok
 }
 
+#[get("/game-server/status")]
+pub async fn admin_game_server_status(
+	_admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+) -> AdminResult<GameServerStatus> {
+	let config = config_snapshot(config_handle);
+	let base = daemon_base_url(&config).ok_or_else(|| {
+		admin_error(Status::ServiceUnavailable, "server_daemon.daemon_url is not configured")
+	})?;
+	let client = reqwest::Client::new();
+	let response = daemon_request(
+		&client,
+		reqwest::Method::GET,
+		format!("{base}/api/game-server/status"),
+		&config,
+	)
+	.send()
+	.await
+	.map_err(|e| admin_error(Status::BadGateway, format!("Daemon unreachable: {e}")))?;
+
+	if response.status().is_success() {
+		let envelope = response
+			.json::<DaemonEnvelope<GameServerStatus>>()
+			.await
+			.map_err(|e| admin_error(Status::BadGateway, format!("Invalid response: {e}")))?;
+		let status = envelope
+			.data
+			.ok_or_else(|| admin_error(Status::BadGateway, "Daemon returned no data"))?;
+		return Ok(Json(status));
+	}
+	let http_status = response.status();
+	Err(admin_error(
+		Status::BadGateway,
+		format!("Daemon returned HTTP {http_status}"),
+	))
+}
+
+async fn proxy_game_server_action(
+	config: &Config,
+	action: &str,
+) -> AdminResult<GameServerActionResult> {
+	let base = daemon_base_url(config).ok_or_else(|| {
+		admin_error(Status::ServiceUnavailable, "server_daemon.daemon_url is not configured")
+	})?;
+	let client = reqwest::Client::new();
+	let response = daemon_request(
+		&client,
+		reqwest::Method::POST,
+		format!("{base}/api/game-server/{action}"),
+		config,
+	)
+	.send()
+	.await
+	.map_err(|e| admin_error(Status::BadGateway, format!("Daemon unreachable: {e}")))?;
+
+	if response.status().is_success() {
+		let envelope = response
+			.json::<DaemonEnvelope<GameServerActionResult>>()
+			.await
+			.map_err(|e| admin_error(Status::BadGateway, format!("Invalid response: {e}")))?;
+		let result = envelope
+			.data
+			.ok_or_else(|| admin_error(Status::BadGateway, "Daemon returned no data"))?;
+		return Ok(Json(result));
+	}
+	let http_status = response.status();
+	let message = response
+		.json::<DaemonEnvelope<rocket::serde::json::Value>>()
+		.await
+		.ok()
+		.and_then(|e| e.error)
+		.unwrap_or_else(|| format!("Daemon returned HTTP {http_status}"));
+	Err(admin_error(Status::BadGateway, message))
+}
+
+#[post("/game-server/start")]
+pub async fn admin_game_server_start(
+	admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+) -> AdminResult<GameServerActionResult> {
+	let config = config_snapshot(config_handle);
+	println!("Admin {} requested L4D2 server start", admin.0);
+	proxy_game_server_action(&config, "start").await
+}
+
+#[post("/game-server/stop")]
+pub async fn admin_game_server_stop(
+	admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+) -> AdminResult<GameServerActionResult> {
+	let config = config_snapshot(config_handle);
+	println!("Admin {} requested L4D2 server stop", admin.0);
+	proxy_game_server_action(&config, "stop").await
+}
+
+#[post("/game-server/restart")]
+pub async fn admin_game_server_restart(
+	admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+) -> AdminResult<GameServerActionResult> {
+	let config = config_snapshot(config_handle);
+	println!("Admin {} requested L4D2 server restart", admin.0);
+	proxy_game_server_action(&config, "restart").await
+}
+
+#[options("/game-server/status")]
+pub fn options_game_server_status() -> Status {
+	Status::Ok
+}
+
+#[options("/game-server/start")]
+pub fn options_game_server_start() -> Status {
+	Status::Ok
+}
+
+#[options("/game-server/stop")]
+pub fn options_game_server_stop() -> Status {
+	Status::Ok
+}
+
+#[options("/game-server/restart")]
+pub fn options_game_server_restart() -> Status {
+	Status::Ok
+}
+
 pub fn mount_admin_routes() -> Vec<Route> {
 	routes![
 		admin_status,
 		admin_restart_backend,
 		admin_restart_daemon,
+		admin_game_server_status,
+		admin_game_server_start,
+		admin_game_server_stop,
+		admin_game_server_restart,
 		options_admin_status,
 		options_admin_restart_backend,
 		options_admin_restart_daemon,
+		options_game_server_status,
+		options_game_server_start,
+		options_game_server_stop,
+		options_game_server_restart,
 	]
 }
 
@@ -416,5 +568,51 @@ chat_id = 2
 		assert!(report.configured);
 		assert!(!report.reachable);
 		assert!(report.error.unwrap().starts_with("Daemon unreachable"));
+	}
+
+	#[rocket::async_test]
+	async fn game_server_endpoints_require_admin_and_origin() {
+		let (client, config) = client().await;
+		let anon = client.get("/api/admin/game-server/status").dispatch().await;
+		assert_eq!(anon.status(), Status::Unauthorized);
+
+		let user = client
+			.get("/api/admin/game-server/status")
+			.header(bearer(USER_ID, &config))
+			.dispatch()
+			.await;
+		assert_eq!(user.status(), Status::Forbidden);
+
+		let user_post = client
+			.post("/api/admin/game-server/start")
+			.header(bearer(USER_ID, &config))
+			.header(origin())
+			.dispatch()
+			.await;
+		assert_eq!(user_post.status(), Status::Forbidden);
+
+		let foreign_post = client
+			.post("/api/admin/game-server/start")
+			.header(bearer(ADMIN_ID, &config))
+			.header(rocket::http::Header::new("Origin", "https://evil.example"))
+			.dispatch()
+			.await;
+		assert_eq!(foreign_post.status(), Status::Forbidden);
+
+		// When daemon is not configured, admin gets ServiceUnavailable:
+		let admin_status = client
+			.get("/api/admin/game-server/status")
+			.header(bearer(ADMIN_ID, &config))
+			.dispatch()
+			.await;
+		assert_eq!(admin_status.status(), Status::ServiceUnavailable);
+
+		let admin_start = client
+			.post("/api/admin/game-server/start")
+			.header(bearer(ADMIN_ID, &config))
+			.header(origin())
+			.dispatch()
+			.await;
+		assert_eq!(admin_start.status(), Status::ServiceUnavailable);
 	}
 }

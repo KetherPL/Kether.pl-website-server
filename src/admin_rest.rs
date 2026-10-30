@@ -64,6 +64,13 @@ pub struct GameServerStatus {
 	pub sub_state: String,
 	pub description: String,
 	pub main_pid: u32,
+	pub main_comm: Option<String>,
+	pub main_started_at: Option<DateTime<Utc>>,
+	pub main_uptime_secs: Option<u64>,
+	pub srcds_pid: Option<u32>,
+	pub srcds_comm: Option<String>,
+	pub srcds_started_at: Option<DateTime<Utc>>,
+	pub srcds_uptime_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -191,7 +191,7 @@ async fn main() {
 		println!("Starting internal services server service");
 		let (daemon_command_tx, mut daemon_command_rx) =
 			mpsc::unbounded_channel::<repl::DaemonCommand>();
-		// Lets the admin panel (`POST /api/admin/restart/backend`) request the same restart as the REPL.
+		// Lets the admin panel (`POST /api/admin/soft-restart/backend`) request the same soft restart as the REPL.
 		control::set_command_sender(daemon_command_tx.clone());
 		#[cfg(feature = "hot_reload")]
 		let _config_watcher = {
@@ -246,8 +246,8 @@ async fn main() {
 					_ = sleep(Duration::from_secs(1)) => {}
 					Some(cmd) = daemon_command_rx.recv() => {
 						match cmd {
-							repl::DaemonCommand::Restart => {
-								println!("Restart requested via REPL — restarting services in-process...");
+							repl::DaemonCommand::SoftRestart => {
+								println!("Soft restart requested — restarting services in-process...");
 								let _ = service_shutdown_tx.send(());
 								await_service_shutdown(
 									rest_handle,

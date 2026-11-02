@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DaemonCommand {
-    Restart,
+    SoftRestart,
     Stop,
 }
 
@@ -74,7 +74,7 @@ impl Repl {
                                 println!("Available commands:");
                                 println!("  h, help - Show this help message");
                                 println!("  q, quit, exit - Exit the REPL");
-                                println!("  R, restart - Restart the daemon");
+                                println!("  R, restart, soft-restart - Soft-restart the backend services");
                                 println!("  S, stop - Stop the daemon");
                                 #[cfg(feature = "rest_call_for_sub")]
                                 println!("  g, chats, groups - List Steam chat groups and chats");
@@ -94,13 +94,13 @@ impl Repl {
                                     eprintln!("Steam chat listing is not available in this build.");
                                 }
                             }
-                            "R" | "restart" => {
+                            "R" | "restart" | "soft-restart" => {
                                 match &self.daemon_command_tx {
                                     Some(tx) => {
-                                        if let Err(e) = tx.send(DaemonCommand::Restart) {
-                                            eprintln!("Failed to request daemon restart: {}", e);
+                                        if let Err(e) = tx.send(DaemonCommand::SoftRestart) {
+                                            eprintln!("Failed to request backend soft restart: {}", e);
                                         } else {
-                                            println!("Restart requested. Closing REPL...");
+                                            println!("Soft restart requested. Closing REPL...");
                                         }
                                     }
                                     None => eprintln!("Daemon command channel unavailable."),

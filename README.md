@@ -92,7 +92,7 @@ This project is the backend server for the Kether.pl website, a homepage for the
 *   **Interactive REPL:**
     *   While the daemon runs with `--service`, press **`C`** to open an in-process command console.
     *   Supports restarting or stopping the daemon without leaving the `screen`/terminal session.
-    *   In-process restart reloads the REST server and SteamBot from disk (useful after changing bot credentials or chat IDs).
+    *   In-process soft restart reloads the REST server and SteamBot from disk (useful after changing bot credentials or chat IDs).
     *   **`chats` / `groups` / `G`** — list Steam chat groups and their chat rooms with IDs (uses the live SteamBot connection; requires `rest_call_for_sub`).
 *   **Command-Line Interface (CLI):**
     *   Allows querying L4D2 servers directly from the command line.
@@ -262,14 +262,14 @@ With the `hot_reload` feature enabled (default in `kether_meta`), saving `config
 * `steam.chat.poll_chat_id`, `steam.chat.dedicated_poll_chat`, `steam.chat.poll_chat_remove_command_message`, `steam.chat.poll_mention_user`
 * `steam.chat.admin.admins`, `steam.chat.admin.admins_same_as_frontend`, `steam.chat.admin.mute_max_minutes`, `steam.chat.admin.ignore_muted_commands`
 
-**Require a REPL restart (`R` / `restart`) or full process restart:**
+**Require a REPL soft restart (`R` / `restart` / `soft-restart`) or full process restart:**
 
 * `steam.bot.username`
 * `steam.bot.password`
 * `steam.chat.group_id`
 * `steam.chat.chat_id`
 
-Hot reload updates the shared in-memory config used by REST handlers. SteamBot credentials and chat routing only take effect after a restart, because the bot must log in again and restart its message listener.
+Hot reload updates the shared in-memory config used by REST handlers. SteamBot credentials and chat routing only take effect after a soft restart or service restart, because the bot must log in again and restart its message listener.
 
 ## Runtime Management (REPL)
 
@@ -283,13 +283,13 @@ Press **`C`** (and press Enter) while the service is running to open the REPL. T
 |---------|---------|--------|
 | `help` | `h` | Show available commands |
 | `quit` | `q`, `exit` | Close the REPL (daemon keeps running) |
-| `restart` | `R` | Restart REST + SteamBot **in the same process** — stays in the current terminal/`screen` session |
+| `soft-restart` | `R`, `restart` | Soft-restart REST + SteamBot **in the same process** — stays in the current terminal/`screen` session |
 | `stop` | `S` | Shut down the daemon cleanly and exit |
 | `chats` | `g`, `groups` | List Steam chat groups and chat rooms with IDs (requires `rest_call_for_sub`) |
 
 After closing the REPL, press **`C`** again to reopen it.
 
-Restart reloads `config.toml` from disk and re-initializes the SteamBot (new login, chat IDs, etc.). Use this after changing bot credentials or chat configuration.
+Soft restart reloads `config.toml` from disk and re-initializes the SteamBot (new login, chat IDs, etc.). Use this after changing bot credentials or chat configuration.
 
 ### Admin panel API
 
@@ -298,7 +298,8 @@ The website's **Admin Panel** page (visible to `frontend_admins` only) uses thes
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/admin/status` | Backend version/PID/uptime and the KetherServerDaemon's status (via `[server_daemon].daemon_url`) |
-| POST | `/api/admin/restart/backend` | Same in-process restart as the REPL `restart` command |
+| POST | `/api/admin/restart/backend` | Schedule a systemd user-service restart of `kiss.service` |
+| POST | `/api/admin/soft-restart/backend` | Same in-process soft restart as the REPL `soft-restart` command |
 | POST | `/api/admin/restart/daemon?force=<bool>` | Restarts the daemon user service `ksd.service` through `/api/daemon/restart`; 409 while busy unless forced |
 | POST | `/api/admin/soft-restart/daemon?force=<bool>` | Re-executes the daemon in place through `/api/daemon/soft-restart`; 409 while busy unless forced |
 

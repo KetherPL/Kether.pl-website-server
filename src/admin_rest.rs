@@ -27,6 +27,7 @@ pub struct BackendStatus {
 	pub services_started_at: DateTime<Utc>,
 	pub uptime_secs: u64,
 	pub restart_supported: bool,
+	pub soft_restart_supported: bool,
 }
 
 /// Mirrors the daemon's `GET /api/daemon/status` payload.
@@ -212,16 +213,32 @@ pub async fn admin_status(_admin: AdminUser, config_handle: &State<ConfigHandle>
 			services_started_at,
 			uptime_secs,
 			restart_supported: control::restart_supported(),
+			soft_restart_supported: control::soft_restart_supported(),
 		},
 		daemon: fetch_daemon_report(&config).await,
 	})
 }
 
-/// Restarts the REST server and SteamBot in-process (same as the REPL `restart` command).
+/// Restarts kiss.service through the backend's systemd user manager.
 #[post("/restart/backend")]
-pub fn admin_restart_backend(admin: AdminUser) -> AdminResult<RestartAccepted> {
-	control::request_restart().map_err(|e| admin_error(Status::ServiceUnavailable, e))?;
-	println!("Admin {} requested a website backend restart", admin.0);
+pub async fn admin_restart_backend(admin: AdminUser) -> AdminResult<RestartAccepted> {
+	let requested_at = Utc::now();
+	tokio::task::spawn_blocking(control::request_restart)
+		.await
+		.map_err(|error| admin_error(Status::InternalServerError, format!("Restart task failed: {error}")))?
+		.map_err(|error| {
+			eprintln!("Website backend service restart failed: {error}");
+			admin_error(Status::ServiceUnavailable, error)
+		})?;
+	println!("Admin {} requested a website backend service restart", admin.0);
+	Ok(Json(RestartAccepted { requested_at }))
+}
+
+/// Restarts the REST server and SteamBot in-process (REPL `soft-restart`).
+#[post("/soft-restart/backend")]
+pub fn admin_soft_restart_backend(admin: AdminUser) -> AdminResult<RestartAccepted> {
+	control::request_soft_restart().map_err(|error| admin_error(Status::ServiceUnavailable, error))?;
+	println!("Admin {} requested a website backend soft restart", admin.0);
 	Ok(Json(RestartAccepted { requested_at: Utc::now() }))
 }
 
@@ -295,6 +312,11 @@ pub fn options_admin_status() -> Status {
 
 #[options("/restart/backend")]
 pub fn options_admin_restart_backend() -> Status {
+	Status::Ok
+}
+
+#[options("/soft-restart/backend")]
+pub fn options_admin_soft_restart_backend() -> Status {
 	Status::Ok
 }
 
@@ -437,6 +459,7 @@ pub fn mount_admin_routes() -> Vec<Route> {
 	routes![
 		admin_status,
 		admin_restart_backend,
+		admin_soft_restart_backend,
 		admin_restart_daemon,
 		admin_soft_restart_daemon,
 		admin_game_server_status,
@@ -445,6 +468,7 @@ pub fn mount_admin_routes() -> Vec<Route> {
 		admin_game_server_restart,
 		options_admin_status,
 		options_admin_restart_backend,
+		options_admin_soft_restart_backend,
 		options_admin_restart_daemon,
 		options_admin_soft_restart_daemon,
 		options_game_server_status,
@@ -539,6 +563,8 @@ chat_id = 2
 		assert_eq!(admin.status(), Status::Ok);
 		let body: rocket::serde::json::Value = admin.into_json().await.expect("json");
 		assert_eq!(body["backend"]["pid"], std::process::id());
+		assert_eq!(body["backend"]["restart_supported"], cfg!(target_os = "linux"));
+		assert_eq!(body["backend"]["soft_restart_supported"], false);
 		assert_eq!(body["daemon"]["configured"], false);
 	}
 
@@ -569,9 +595,9 @@ chat_id = 2
 			.await;
 		assert_eq!(user.status(), Status::Forbidden);
 
-		// Tests never register the REPL command channel, so a backend restart is unavailable.
+		// Tests never register the REPL command channel, so a backend soft restart is unavailable.
 		let backend = client
-			.post("/api/admin/restart/backend")
+			.post("/api/admin/soft-restart/backend")
 			.header(bearer(ADMIN_ID, &config))
 			.header(origin())
 			.dispatch()
@@ -585,6 +611,28 @@ chat_id = 2
 			.dispatch()
 			.await;
 		assert_eq!(daemon.status(), Status::ServiceUnavailable);
+	}
+
+	#[rocket::async_test]
+	async fn backend_restart_modes_require_admin_and_allowed_origin() {
+		let (client, config) = client().await;
+		for action in ["restart", "soft-restart"] {
+			let path = format!("/api/admin/{action}/backend");
+			let anonymous = client.post(&path).header(origin()).dispatch().await;
+			assert_eq!(anonymous.status(), Status::Unauthorized);
+			let user = client.post(&path)
+				.header(bearer(USER_ID, &config))
+				.header(origin())
+				.dispatch().await;
+			assert_eq!(user.status(), Status::Forbidden);
+			let foreign = client.post(&path)
+				.header(bearer(ADMIN_ID, &config))
+				.header(rocket::http::Header::new("Origin", "https://evil.example"))
+				.dispatch().await;
+			assert_eq!(foreign.status(), Status::Forbidden);
+			let preflight = client.options(&path).dispatch().await;
+			assert_eq!(preflight.status(), Status::Ok);
+		}
 	}
 
 	#[rocket::async_test]

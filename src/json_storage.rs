@@ -64,6 +64,18 @@ pub struct JsonDatabase {
 }
 
 impl JsonDatabase {
+    #[cfg(test)]
+    pub fn in_memory_for_tests() -> Self {
+        // Tests exercise audit persistence without writing the executable's live databases.
+        let (save_tx, _save_rx) = tokio::sync::mpsc::channel(1);
+        Self {
+            inner: Arc::new(RwLock::new(JsonDatabaseInternal {
+                commands: HashMap::new(), binds: HashMap::new(), bind_suggestions: HashMap::new(),
+            })),
+            save_tx,
+        }
+    }
+
     /// Creates a new JsonDatabase and loads data from JSON files
     /// 
     /// Files are loaded from the same directory as the executable.

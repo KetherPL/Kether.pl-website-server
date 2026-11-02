@@ -6,6 +6,8 @@ use rocket::serde::json::Json;
 use rocket::{get, options, post, State};
 
 use crate::auth::{AdminUser, AuthUser};
+use crate::admin_actions::{config_snapshot as audit_config_snapshot, ActionChoice, AdminAction, AdminActionLog, RecordedChange};
+use rocket::serde::json::json;
 use crate::steam_bot::registry::ConfigHandle;
 
 use super::admin_install::{
@@ -298,30 +300,76 @@ pub async fn create_map_suggestion(
 
 #[post("/maps/suggestions/<id>/deny")]
 pub async fn deny_map_suggestion(
-    _admin: AdminUser,
+    admin: AdminUser,
     bridge: &State<MapsBridgeState>,
+    log: &State<AdminActionLog>,
+    config_handle: &State<ConfigHandle>,
     id: u64,
 ) -> Result<Status, (Status, Json<AdminInstallErrorResponse>)> {
-    bridge
-        .deny_map_suggestion(id)
-        .await
-        .map(|_| Status::Ok)
-        .map_err(|(status, error)| suggestion_error(status, error))
+    let config = audit_config_snapshot(config_handle);
+    let before = bridge
+        .suggestions_store()
+        .get(id)
+        .map_err(|error| suggestion_error(Status::InternalServerError, error))?
+        .ok_or_else(|| suggestion_error(Status::NotFound, format!("Suggestion #{id} not found")))?;
+    let data =
+        json!({"id": id, "name": &before.title, "url": &before.download_link, "before": &before});
+    log.record_change(
+        &config,
+        admin.0,
+        AdminAction::MapSuggestion,
+        ActionChoice::Deny,
+        data,
+        async {
+            let response = async {
+                bridge
+                    .deny_map_suggestion(id)
+                    .await
+                    .map(|_| Status::Ok)
+                    .map_err(|(status, error)| suggestion_error(status, error))
+            }
+            .await
+            .map_err(
+                |(status, error): (Status, Json<AdminInstallErrorResponse>)| {
+                    (status, error.error.clone())
+                },
+            )?;
+            let final_data = json!({"after": null});
+            Ok(RecordedChange::completed(response, final_data))
+        },
+    )
+    .await
+    .map_err(|(status, error)| suggestion_error(status, error))
 }
 
 #[post("/maps/suggestions/<id>/accept")]
 pub async fn accept_map_suggestion(
-    _admin: AdminUser,
+    admin: AdminUser,
     bridge: &State<MapsBridgeState>,
+    log: &State<AdminActionLog>,
     config_handle: &State<ConfigHandle>,
     id: u64,
 ) -> Result<Json<AcceptMapSuggestionResponse>, (Status, Json<AdminInstallErrorResponse>)> {
-    let api_key = steam_api_key(config_handle);
-    bridge
-        .accept_map_suggestion(id, api_key.as_deref())
-        .await
-        .map(Json)
-        .map_err(|(status, error)| suggestion_error(status, error))
+    let config = audit_config_snapshot(config_handle);
+    let before = bridge
+        .suggestions_store()
+        .get(id)
+        .map_err(|error| suggestion_error(Status::InternalServerError, error))?
+        .ok_or_else(|| suggestion_error(Status::NotFound, format!("Suggestion #{id} not found")))?;
+    let data =
+        json!({"id": id, "name": &before.title, "url": &before.download_link, "before": &before});
+    log.record_change(&config, admin.0, AdminAction::MapSuggestion, ActionChoice::Accept, data, async {
+        let response = async {
+            let api_key = steam_api_key(config_handle);
+                bridge
+                    .accept_map_suggestion(id, api_key.as_deref())
+                    .await
+                    .map(Json)
+                    .map_err(|(status, error)| suggestion_error(status, error))
+        }.await.map_err(|(status, error): (Status, Json<AdminInstallErrorResponse>)| (status, error.error.clone()))?;
+        let final_data = json!({"result": &response.0, "installed": bridge.audit_installed_map_data(response.map_id)});
+        Ok(RecordedChange::completed(response, final_data))
+    }).await.map_err(|(status, error)| suggestion_error(status, error))
 }
 
 #[options("/maps/suggestions")]

@@ -11,6 +11,9 @@ use rocket::serde::{Deserialize, Serialize};
 use crate::json_api::models::Command;
 use crate::json_api::utils::{ok_status, storage_error_status};
 use crate::json_storage::JsonDatabase;
+use crate::admin_actions::{config_snapshot as audit_config_snapshot, ActionChoice, AdminAction, AdminActionLog, RecordedChange};
+use rocket::serde::json::json;
+use crate::steam_bot::registry::ConfigHandle;
 use crate::auth::AdminUser;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -42,55 +45,171 @@ pub fn list_commands(db: &State<JsonDatabase>) -> Result<Json<Vec<Command>>, Sta
 
 #[post("/commands/addCommand", data = "<request>")]
 pub async fn create_command(
-	_admin: AdminUser,
+	admin: AdminUser,
 	db: &State<JsonDatabase>,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	request: Json<CreateCommandRequest>,
 ) -> Result<Json<Command>, Status> {
-	db.create_command(request.command.clone(), request.description.clone()).await
-		.map(Json)
-		.map_err(|e| storage_error_status("creating command", &e, &[], &["already exists"]))
+	let config = audit_config_snapshot(config_handle);
+	let _guard = log.lock_content().await;
+	let data = json!({"submitted": &request.0});
+	log.record_change(
+		&config,
+		admin.0,
+		AdminAction::Command,
+		ActionChoice::Create,
+		data,
+		async {
+			db.create_command(request.command.clone(), request.description.clone())
+				.await
+				.map(|value| {
+					let data = json!({"after": &value});
+					RecordedChange::completed(Json(value), data)
+				})
+				.map_err(|e| {
+					(
+						storage_error_status("creating command", &e, &[], &["already exists"]),
+						e,
+					)
+				})
+		},
+	)
+	.await
+	.map_err(|(status, _)| status)
 }
 
 #[post("/commands/deleteCommand", data = "<request>")]
 pub async fn delete_command(
-	_admin: AdminUser,
+	admin: AdminUser,
 	db: &State<JsonDatabase>,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	request: Json<DeleteCommandRequest>,
 ) -> Result<Json<usize>, Status> {
-	db.delete_command(request.id).await
-		.map(|_| Json(1))
-		.map_err(|e| storage_error_status("deleting command", &e, &["not found"], &[]))
+	let config = audit_config_snapshot(config_handle);
+	let _guard = log.lock_content().await;
+	let before = db
+		.get_command(request.id)
+		.map_err(|error| storage_error_status("deleting command", &error, &["not found"], &[]))?;
+	let data = json!({"id": request.id, "before": &before});
+	log.record_change(
+		&config,
+		admin.0,
+		AdminAction::Command,
+		ActionChoice::Delete,
+		data,
+		async {
+			db.delete_command(request.id)
+				.await
+				.map(|_| RecordedChange::completed(Json(1), json!({"after": null})))
+				.map_err(|e| {
+					(
+						storage_error_status("deleting command", &e, &["not found"], &[]),
+						e,
+					)
+				})
+		},
+	)
+	.await
+	.map_err(|(status, _)| status)
 }
 
 #[post("/commands/updateCommand", data = "<command_to_update>")]
 pub async fn update_command(
-	_admin: AdminUser,
+	admin: AdminUser,
 	db: &State<JsonDatabase>,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	command_to_update: Json<Command>,
 ) -> Result<Json<Command>, Status> {
-	db.update_command(
-		command_to_update.id,
-		command_to_update.command.clone(),
-		command_to_update.description.clone(),
-	).await
-	.map(Json)
-	.map_err(|e| storage_error_status("updating command", &e, &["not found"], &["already exists"]))
+	let config = audit_config_snapshot(config_handle);
+	let _guard = log.lock_content().await;
+	let before = db
+		.get_command(command_to_update.id)
+		.map_err(|error| storage_error_status("updating command", &error, &["not found"], &[]))?;
+	let data = json!({"id": command_to_update.id, "before": &before});
+	log.record_change(
+		&config,
+		admin.0,
+		AdminAction::Command,
+		ActionChoice::Update,
+		data,
+		async {
+			db.update_command(
+				command_to_update.id,
+				command_to_update.command.clone(),
+				command_to_update.description.clone(),
+			)
+			.await
+			.map(|value| {
+				let data = json!({"after": &value});
+				RecordedChange::completed(Json(value), data)
+			})
+			.map_err(|e| {
+				(
+					storage_error_status(
+						"updating command",
+						&e,
+						&["not found"],
+						&["already exists"],
+					),
+					e,
+				)
+			})
+		},
+	)
+	.await
+	.map_err(|(status, _)| status)
 }
 
 #[put("/commands/<command_id>", data = "<command_to_update>")]
 pub async fn update_command_by_id(
-	_admin: AdminUser,
+	admin: AdminUser,
 	db: &State<JsonDatabase>,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	command_id: i32,
 	command_to_update: Json<Command>,
 ) -> Result<Json<Command>, Status> {
-	db.update_command(
-		command_id,
-		command_to_update.command.clone(),
-		command_to_update.description.clone(),
-	).await
-	.map(Json)
-	.map_err(|e| storage_error_status("updating command by id", &e, &["not found"], &["already exists"]))
+	let config = audit_config_snapshot(config_handle);
+	let _guard = log.lock_content().await;
+	let before = db.get_command(command_id).map_err(|error| {
+		storage_error_status("updating command by id", &error, &["not found"], &[])
+	})?;
+	let data = json!({"id": command_id, "before": &before});
+	log.record_change(
+		&config,
+		admin.0,
+		AdminAction::Command,
+		ActionChoice::Update,
+		data,
+		async {
+			db.update_command(
+				command_id,
+				command_to_update.command.clone(),
+				command_to_update.description.clone(),
+			)
+			.await
+			.map(|value| {
+				let data = json!({"after": &value});
+				RecordedChange::completed(Json(value), data)
+			})
+			.map_err(|e| {
+				(
+					storage_error_status(
+						"updating command by id",
+						&e,
+						&["not found"],
+						&["already exists"],
+					),
+					e,
+				)
+			})
+		},
+	)
+	.await
+	.map_err(|(status, _)| status)
 }
 
 #[options("/commands/addCommand")]

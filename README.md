@@ -321,10 +321,19 @@ Stable action IDs and choices:
 - `1`: backend — `restart`, `soft_restart`.
 - `2`: map daemon — `restart`, `soft_restart`; `force` modifier.
 - `3`: L4D2 game server — `start`, `stop`, `restart`.
+- `4`: maps — `install`, `delete`, `update`, `update_all`.
+- `5`: Hall of Fame binds — `create`, `update`, `delete`.
+- `6`: bind suggestions — admin `create`, `update`, `delete`.
+- `7`: commands — `create`, `update`, `delete`.
+- `8`: map suggestions — `accept`, `deny`.
 
 Each entry contains a string `steam_id` (exact SteamID64), numeric `action_id`, named `choice`, `modifiers`, Unix-seconds `unix_time`, `outcome`, optional `error`, and an `additional_data` slot for action results. New action types must use new IDs; existing IDs must not be reassigned.
 
-Authorized maintenance requests are saved as `requested` before execution. Restart requests become `accepted` when scheduled; game-server operations become `completed` on success; rejected or failed requests become `failed`. Acceptance does not confirm that a service returned online. An interrupted request can remain `requested`. Status refreshes, history reads, REPL commands and actions outside the Admin Panel maintenance routes are not recorded.
+Authorized maintenance requests are saved as `requested` before execution. Restart requests become `accepted` when scheduled; game-server operations become `completed` on success; rejected or failed requests become `failed`. Acceptance does not confirm that a service returned online. An interrupted request can remain `requested`. Content mutations preserve their server-side `before` record and the resulting `after` record in `additional_data`. Deleted binds retain author and full text, commands retain their command and description, and suggestions retain their original submitter. Bind snapshots include vote counts without voter identities. The existing bind-suggestion approval flow records bind creation and suggestion removal as separate actions.
+
+Map entries include `name`, `url`, and the previous map metadata, with the linked name displayed directly in the history message. Update batches retain previous map metadata and individual results; partial failures are marked failed, and update attempts without changes are marked `unchanged`.
+
+Status refreshes, update-availability scans, history reads, REPL commands, ordinary user suggestions and votes are not recorded.
 
 Writes use atomic file replacement and private file permissions on Unix. An enabled logger that cannot save the initial entry prevents execution; a failure to update the outcome afterward is reported to stderr while retaining the saved request and the action's original response. Corrupt history is reported without replacing it.
 

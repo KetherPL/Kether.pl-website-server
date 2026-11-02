@@ -11,6 +11,8 @@ use rocket::serde::{Deserialize, Serialize};
 use crate::json_api::models::BindSuggestion;
 use crate::json_api::utils::{ok_status, storage_error_status};
 use crate::json_storage::JsonDatabase;
+use crate::admin_actions::{config_snapshot as audit_config_snapshot, ActionChoice, AdminAction, AdminActionLog, RecordedChange};
+use rocket::serde::json::json;
 use crate::auth::{AdminUser, AuthUser};
 use crate::steam_bot::registry::ConfigHandle;
 
@@ -104,60 +106,189 @@ pub async fn list_bind_suggestions(
 pub async fn create_bind_suggestion(
 	user: AuthUser,
 	db: &State<JsonDatabase>,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	request: Json<CreateBindSuggestionRequest>,
 ) -> Result<Json<BindSuggestion>, Status> {
-	let proposed_by = user.0.to_string();
-	db.create_bind_suggestion(
-		request.author.clone(),
-		request.text.clone(),
-		proposed_by,
-	).await
-	.map(Json)
-	.map_err(|e| storage_error_status("creating bind suggestion", &e, &[], &["already exists"]))
+	let config = audit_config_snapshot(config_handle);
+	let _guard = log.lock_content().await;
+	let data = json!({"submitted": &request.0});
+	let operation = async {
+		let proposed_by = user.0.to_string();
+		db.create_bind_suggestion(request.author.clone(), request.text.clone(), proposed_by)
+			.await
+			.map(|value| {
+				let data = json!({"after": &value});
+				RecordedChange::completed(Json(value), data)
+			})
+			.map_err(|e| {
+				(
+					storage_error_status("creating bind suggestion", &e, &[], &["already exists"]),
+					e,
+				)
+			})
+	};
+	if config.is_admin(user.0) {
+		log.record_change(
+			&config,
+			user.0,
+			AdminAction::BindSuggestion,
+			ActionChoice::Create,
+			data,
+			operation,
+		)
+		.await
+		.map_err(|(status, _)| status)
+	} else {
+		operation
+			.await
+			.map(|change| change.value)
+			.map_err(|(status, _)| status)
+	}
 }
 
 #[post("/bind_suggestions/deleteBindSuggestion", data = "<request>")]
 pub async fn delete_bind_suggestion(
-	_admin: AdminUser,
+	admin: AdminUser,
 	db: &State<JsonDatabase>,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	request: Json<DeleteBindSuggestionRequest>,
 ) -> Result<Json<usize>, Status> {
-	db.delete_bind_suggestion(request.id).await
-		.map(|_| Json(1))
-		.map_err(|e| storage_error_status("deleting bind suggestion", &e, &["not found"], &[]))
+	let config = audit_config_snapshot(config_handle);
+	let _guard = log.lock_content().await;
+	let before = db.get_bind_suggestion(request.id).map_err(|error| {
+		storage_error_status("deleting bind suggestion", &error, &["not found"], &[])
+	})?;
+	let data = json!({"id": request.id, "before": &before});
+	log.record_change(
+		&config,
+		admin.0,
+		AdminAction::BindSuggestion,
+		ActionChoice::Delete,
+		data,
+		async {
+			db.delete_bind_suggestion(request.id)
+				.await
+				.map(|_| RecordedChange::completed(Json(1), json!({"after": null})))
+				.map_err(|e| {
+					(
+						storage_error_status("deleting bind suggestion", &e, &["not found"], &[]),
+						e,
+					)
+				})
+		},
+	)
+	.await
+	.map_err(|(status, _)| status)
 }
 
 #[post("/bind_suggestions/updateBindSuggestion", data = "<bind_suggestion_to_update>")]
 pub async fn update_bind_suggestion(
-	_admin: AdminUser,
+	admin: AdminUser,
 	db: &State<JsonDatabase>,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	bind_suggestion_to_update: Json<BindSuggestion>,
 ) -> Result<Json<BindSuggestion>, Status> {
-	db.update_bind_suggestion(
-		bind_suggestion_to_update.id,
-		bind_suggestion_to_update.author.clone(),
-		bind_suggestion_to_update.text.clone(),
-		bind_suggestion_to_update.proposed_by.clone(),
-	).await
-	.map(Json)
-	.map_err(|e| storage_error_status("updating bind suggestion", &e, &["not found"], &["already exists"]))
+	let config = audit_config_snapshot(config_handle);
+	let _guard = log.lock_content().await;
+	let before = db
+		.get_bind_suggestion(bind_suggestion_to_update.id)
+		.map_err(|error| {
+			storage_error_status("updating bind suggestion", &error, &["not found"], &[])
+		})?;
+	let data = json!({"id": bind_suggestion_to_update.id, "before": &before});
+	log.record_change(
+		&config,
+		admin.0,
+		AdminAction::BindSuggestion,
+		ActionChoice::Update,
+		data,
+		async {
+			db.update_bind_suggestion(
+				bind_suggestion_to_update.id,
+				bind_suggestion_to_update.author.clone(),
+				bind_suggestion_to_update.text.clone(),
+				bind_suggestion_to_update.proposed_by.clone(),
+			)
+			.await
+			.map(|value| {
+				let data = json!({"after": &value});
+				RecordedChange::completed(Json(value), data)
+			})
+			.map_err(|e| {
+				(
+					storage_error_status(
+						"updating bind suggestion",
+						&e,
+						&["not found"],
+						&["already exists"],
+					),
+					e,
+				)
+			})
+		},
+	)
+	.await
+	.map_err(|(status, _)| status)
 }
 
 #[put("/bind_suggestions/<bind_suggestion_id>", data = "<bind_suggestion_to_update>")]
 pub async fn update_bind_suggestion_by_id(
-	_admin: AdminUser,
+	admin: AdminUser,
 	db: &State<JsonDatabase>,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	bind_suggestion_id: i32,
 	bind_suggestion_to_update: Json<BindSuggestion>,
 ) -> Result<Json<BindSuggestion>, Status> {
-	db.update_bind_suggestion(
-		bind_suggestion_id,
-		bind_suggestion_to_update.author.clone(),
-		bind_suggestion_to_update.text.clone(),
-		bind_suggestion_to_update.proposed_by.clone(),
-	).await
-	.map(Json)
-	.map_err(|e| storage_error_status("updating bind suggestion by id", &e, &["not found"], &["already exists"]))
+	let config = audit_config_snapshot(config_handle);
+	let _guard = log.lock_content().await;
+	let before = db
+		.get_bind_suggestion(bind_suggestion_id)
+		.map_err(|error| {
+			storage_error_status(
+				"updating bind suggestion by id",
+				&error,
+				&["not found"],
+				&[],
+			)
+		})?;
+	let data = json!({"id": bind_suggestion_id, "before": &before});
+	log.record_change(
+		&config,
+		admin.0,
+		AdminAction::BindSuggestion,
+		ActionChoice::Update,
+		data,
+		async {
+			db.update_bind_suggestion(
+				bind_suggestion_id,
+				bind_suggestion_to_update.author.clone(),
+				bind_suggestion_to_update.text.clone(),
+				bind_suggestion_to_update.proposed_by.clone(),
+			)
+			.await
+			.map(|value| {
+				let data = json!({"after": &value});
+				RecordedChange::completed(Json(value), data)
+			})
+			.map_err(|e| {
+				(
+					storage_error_status(
+						"updating bind suggestion by id",
+						&e,
+						&["not found"],
+						&["already exists"],
+					),
+					e,
+				)
+			})
+		},
+	)
+	.await
+	.map_err(|(status, _)| status)
 }
 
 #[options("/bind_suggestions/addBindSuggestion")]

@@ -7,3 +7,6 @@ pub mod suggestions;
 pub mod utils;
 pub mod votings;
 
+
+#[cfg(test)]
+mod audit_tests;

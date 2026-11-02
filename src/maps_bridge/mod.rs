@@ -24,6 +24,8 @@ use rocket::serde::{Deserialize, Serialize};
 use rocket::{get, options, post, routes, Route, State};
 
 use crate::auth::AdminUser;
+use crate::admin_actions::{config_snapshot as audit_config_snapshot, ActionChoice, ActionOutcome, AdminAction, AdminActionLog, RecordedChange};
+use rocket::serde::json::{json, Value};
 use crate::steam_bot::registry::ConfigHandle;
 
 use admin_install::{
@@ -189,6 +191,22 @@ impl MapsBridgeState {
         save_registry(&self.registry_path, maps.clone())?;
         self.refresh_workshop_previews(&maps, steam_api_key).await;
         Ok(())
+    }
+
+    async fn audit_map_data(&self, logging: bool, id: u64) -> Result<Value, String> {
+        if !logging { return Ok(json!({"id": id})); }
+        let before = proxy_daemon_get_map(&self.http_client, &self.daemon_url,
+            self.sync_api_key.as_deref(), id).await?;
+        Ok(json!({"id": id, "name": &before.name, "url": &before.source_url, "before": &before}))
+    }
+
+    fn audit_installed_map_data(&self, id: u64) -> Value {
+        let installed = load_registry(&self.registry_path).ok()
+            .and_then(|registry| registry.maps.into_iter().find(|map| map.id == id));
+        match installed {
+            Some(map) => json!({"id": id, "name": &map.name, "url": &map.source_url, "after": &map}),
+            None => json!({"id": id}),
+        }
     }
 
     pub async fn admin_install_map(
@@ -658,47 +676,98 @@ pub struct AdminInstallErrorResponse {
     pub error: String,
 }
 
+fn audit_map_error((status, error): (Status, String)) -> (Status, Json<AdminInstallErrorResponse>) {
+    (status, Json(AdminInstallErrorResponse { error }))
+}
+
+fn update_audit_outcome(results: &[AdminUpdateCheckResponse]) -> (ActionOutcome, Option<String>) {
+    let failures: Vec<_> = results
+        .iter()
+        .filter(|result| result.status == UpdateStatus::Failed)
+        .map(|result| result.message.clone())
+        .collect();
+    if !failures.is_empty() {
+        (ActionOutcome::Failed, Some(failures.join("; ")))
+    } else if results
+        .iter()
+        .any(|result| result.status == UpdateStatus::Updated)
+    {
+        (ActionOutcome::Completed, None)
+    } else {
+        (ActionOutcome::Unchanged, None)
+    }
+}
+
 #[post("/maps/admin/install", data = "<body>")]
 pub async fn admin_install_map(
-    _admin: AdminUser,
+    admin: AdminUser,
     bridge: &State<MapsBridgeState>,
+    log: &State<AdminActionLog>,
     config_handle: &State<ConfigHandle>,
     body: Json<AdminInstallMapRequest>,
 ) -> Result<Json<AdminInstallMapResponse>, (Status, Json<AdminInstallErrorResponse>)> {
-    let api_key = config_handle
-        .read()
-        .ok()
-        .map(|config| config.steam_web_api_key.clone());
-    let key_ref = api_key.as_deref();
+    let config = audit_config_snapshot(config_handle);
+    let data = json!({"submitted": &body.0, "name": &body.name, "url": &body.input});
+    log.record_change(
+        &config,
+        admin.0,
+        AdminAction::Map,
+        ActionChoice::Install,
+        data,
+        async {
+            let response = async {
+                let api_key = config_handle
+                    .read()
+                    .ok()
+                    .map(|config| config.steam_web_api_key.clone());
+                let key_ref = api_key.as_deref();
 
-    let response = bridge
-        .admin_install_map(body.into_inner())
-        .await
-        .map_err(|error| {
-            eprintln!("Admin map install failed: {}", error);
-            let status = if error.contains("not configured")
-                || error.contains("Daemon request failed")
-                || error.contains("Daemon returned HTTP")
-            {
-                Status::BadGateway
-            } else if error.contains("required")
-                || error.contains("Invalid")
-                || error.contains("Expected")
-                || error.contains("too long")
-                || error.contains("Could not detect")
-            {
-                Status::BadRequest
-            } else {
-                Status::InternalServerError
-            };
-            (status, Json(AdminInstallErrorResponse { error }))
-        })?;
+                let response =
+                    bridge
+                        .admin_install_map(body.into_inner())
+                        .await
+                        .map_err(|error| {
+                            eprintln!("Admin map install failed: {}", error);
+                            let status = if error.contains("not configured")
+                                || error.contains("Daemon request failed")
+                                || error.contains("Daemon returned HTTP")
+                            {
+                                Status::BadGateway
+                            } else if error.contains("required")
+                                || error.contains("Invalid")
+                                || error.contains("Expected")
+                                || error.contains("too long")
+                                || error.contains("Could not detect")
+                            {
+                                Status::BadRequest
+                            } else {
+                                Status::InternalServerError
+                            };
+                            (status, Json(AdminInstallErrorResponse { error }))
+                        })?;
 
-    if let Err(error) = bridge.refresh_registry_from_daemon(key_ref).await {
-        eprintln!("Registry refresh after install failed (non-fatal): {}", error);
-    }
+                if let Err(error) = bridge.refresh_registry_from_daemon(key_ref).await {
+                    eprintln!(
+                        "Registry refresh after install failed (non-fatal): {}",
+                        error
+                    );
+                }
 
-    Ok(Json(response))
+                Ok(Json(response))
+            }
+            .await
+            .map_err(
+                |(status, error): (Status, Json<AdminInstallErrorResponse>)| {
+                    (status, error.error.clone())
+                },
+            )?;
+            let mut final_data = bridge.audit_installed_map_data(response.map_id);
+            final_data["result"] = json!(&response.0);
+            Ok(RecordedChange::completed(response, final_data))
+        },
+    )
+    .await
+    .map_err(audit_map_error)
 }
 
 fn admin_proxy_error(error: String) -> (Status, Json<AdminInstallErrorResponse>) {
@@ -740,43 +809,113 @@ pub async fn get_admin_map_detail(
 
 #[post("/maps/admin/<id>/uninstall")]
 pub async fn admin_uninstall_map(
-    _admin: AdminUser,
+    admin: AdminUser,
     bridge: &State<MapsBridgeState>,
+    log: &State<AdminActionLog>,
     config_handle: &State<ConfigHandle>,
     id: u64,
 ) -> Result<Status, (Status, Json<AdminInstallErrorResponse>)> {
-    bridge
-        .admin_uninstall_map(id)
+    let config = audit_config_snapshot(config_handle);
+    let data = bridge
+        .audit_map_data(config.admin_action_logging, id)
         .await
         .map_err(admin_proxy_error)?;
+    log.record_change(
+        &config,
+        admin.0,
+        AdminAction::Map,
+        ActionChoice::Delete,
+        data,
+        async {
+            let response = async {
+                bridge
+                    .admin_uninstall_map(id)
+                    .await
+                    .map_err(admin_proxy_error)?;
 
-    let api_key = steam_api_key(config_handle);
-    if let Err(error) = bridge.refresh_registry_from_daemon(api_key.as_deref()).await {
-        eprintln!("Registry refresh after uninstall failed (non-fatal): {}", error);
-    }
-    Ok(Status::Ok)
+                let api_key = steam_api_key(config_handle);
+                if let Err(error) = bridge
+                    .refresh_registry_from_daemon(api_key.as_deref())
+                    .await
+                {
+                    eprintln!(
+                        "Registry refresh after uninstall failed (non-fatal): {}",
+                        error
+                    );
+                }
+                Ok(Status::Ok)
+            }
+            .await
+            .map_err(
+                |(status, error): (Status, Json<AdminInstallErrorResponse>)| {
+                    (status, error.error.clone())
+                },
+            )?;
+            Ok(RecordedChange::completed(response, json!({"after": null})))
+        },
+    )
+    .await
+    .map_err(audit_map_error)
 }
 
 #[post("/maps/admin/<id>/check-update")]
 pub async fn admin_check_update_map(
-    _admin: AdminUser,
+    admin: AdminUser,
     bridge: &State<MapsBridgeState>,
+    log: &State<AdminActionLog>,
     config_handle: &State<ConfigHandle>,
     id: u64,
 ) -> Result<Json<AdminUpdateCheckResponse>, (Status, Json<AdminInstallErrorResponse>)> {
-    let response = bridge
-        .admin_check_update_map(id)
+    let config = audit_config_snapshot(config_handle);
+    let data = bridge
+        .audit_map_data(config.admin_action_logging, id)
         .await
         .map_err(admin_proxy_error)?;
+    log.record_change(
+        &config,
+        admin.0,
+        AdminAction::Map,
+        ActionChoice::Update,
+        data,
+        async {
+            let response = async {
+                let response = bridge
+                    .admin_check_update_map(id)
+                    .await
+                    .map_err(admin_proxy_error)?;
 
-    if response.status == UpdateStatus::Updated {
-        let api_key = steam_api_key(config_handle);
-        if let Err(error) = bridge.refresh_registry_from_daemon(api_key.as_deref()).await {
-            eprintln!("Registry refresh after map update failed (non-fatal): {}", error);
-        }
-    }
+                if response.status == UpdateStatus::Updated {
+                    let api_key = steam_api_key(config_handle);
+                    if let Err(error) = bridge
+                        .refresh_registry_from_daemon(api_key.as_deref())
+                        .await
+                    {
+                        eprintln!(
+                            "Registry refresh after map update failed (non-fatal): {}",
+                            error
+                        );
+                    }
+                }
 
-    Ok(Json(response))
+                Ok(Json(response))
+            }
+            .await
+            .map_err(
+                |(status, error): (Status, Json<AdminInstallErrorResponse>)| {
+                    (status, error.error.clone())
+                },
+            )?;
+            let (outcome, error) = update_audit_outcome(std::slice::from_ref(&response.0));
+            Ok(RecordedChange {
+                data: json!({"after": &response.map, "result": &response.0}),
+                value: response,
+                outcome,
+                error,
+            })
+        },
+    )
+    .await
+    .map_err(audit_map_error)
 }
 
 #[get("/maps/admin/updates")]
@@ -805,28 +944,74 @@ pub async fn admin_check_updates(
 
 #[post("/maps/admin/updates/apply", data = "<body>")]
 pub async fn admin_apply_updates(
-    _admin: AdminUser,
+    admin: AdminUser,
     bridge: &State<MapsBridgeState>,
+    log: &State<AdminActionLog>,
     config_handle: &State<ConfigHandle>,
     body: Json<AdminApplyUpdatesRequest>,
 ) -> Result<Json<AdminApplyUpdatesResponse>, (Status, Json<AdminInstallErrorResponse>)> {
-    let response = bridge
-        .admin_apply_updates(body.map_id)
-        .await
-        .map_err(admin_proxy_error)?;
+    let config = audit_config_snapshot(config_handle);
+    let choice = if body.map_id.is_some() {
+        ActionChoice::Update
+    } else {
+        ActionChoice::UpdateAll
+    };
+    let data = if let Some(id) = body.map_id {
+        bridge
+            .audit_map_data(config.admin_action_logging, id)
+            .await
+            .map_err(admin_proxy_error)?
+    } else if config.admin_action_logging {
+        let before = bridge
+            .fetch_maps_from_daemon()
+            .await
+            .map_err(admin_proxy_error)?;
+        json!({"before": before})
+    } else {
+        json!({})
+    };
+    log.record_change(&config, admin.0, AdminAction::Map, choice, data, async {
+        let response = async {
+            let response = bridge
+                .admin_apply_updates(body.map_id)
+                .await
+                .map_err(admin_proxy_error)?;
 
-    if response
-        .results
-        .iter()
-        .any(|result| result.status == UpdateStatus::Updated)
-    {
-        let api_key = steam_api_key(config_handle);
-        if let Err(error) = bridge.refresh_registry_from_daemon(api_key.as_deref()).await {
-            eprintln!("Registry refresh after map updates failed (non-fatal): {}", error);
+            if response
+                .results
+                .iter()
+                .any(|result| result.status == UpdateStatus::Updated)
+            {
+                let api_key = steam_api_key(config_handle);
+                if let Err(error) = bridge
+                    .refresh_registry_from_daemon(api_key.as_deref())
+                    .await
+                {
+                    eprintln!(
+                        "Registry refresh after map updates failed (non-fatal): {}",
+                        error
+                    );
+                }
+            }
+
+            Ok(Json(response))
         }
-    }
-
-    Ok(Json(response))
+        .await
+        .map_err(
+            |(status, error): (Status, Json<AdminInstallErrorResponse>)| {
+                (status, error.error.clone())
+            },
+        )?;
+        let (outcome, error) = update_audit_outcome(&response.results);
+        Ok(RecordedChange {
+            data: json!({"result": &response.0}),
+            value: response,
+            outcome,
+            error,
+        })
+    })
+    .await
+    .map_err(audit_map_error)
 }
 
 #[get("/maps")]
@@ -938,6 +1123,91 @@ sync_api_key = "test-secret"
 "#,
         )
         .expect("config")
+    }
+
+    #[tokio::test]
+    async fn map_audit_deletion_saves_name_link_and_previous_version_before_daemon_mutation() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for failed in [false, true] {
+            let directory = tempfile::tempdir().expect("directory");
+            let log_path = directory.path().join("log_admin_actions.json");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+            let mut config = test_config();
+            config.server_daemon_url = format!("http://{}", listener.local_addr().expect("address"));
+            let mut before = map_entry(42, "No Mercy Rehab", Some(123), "https://steamcommunity.com/sharedfiles/filedetails/?id=123");
+            before.version = Some("1.0".to_string());
+            let server_log_path = log_path.clone();
+            let daemon = tokio::spawn(async move {
+                let responses = if failed {
+                    vec![(200, json!({"success": true, "data": before})), (500, json!({"success": false, "error": "Uninstall failed"}))]
+                } else {
+                    vec![(200, json!({"success": true, "data": before})), (200, json!({"success": true, "data": null})), (200, json!({"success": true, "data": []}))]
+                };
+                for (index, (status, body)) in responses.into_iter().enumerate() {
+                    let (mut stream, _) = listener.accept().await.expect("accept");
+                    let mut request = Vec::new();
+                    let mut buffer = [0; 1024];
+                    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let count = stream.read(&mut buffer).await.expect("read");
+                        assert!(count > 0);
+                        request.extend_from_slice(&buffer[..count]);
+                    }
+                    if index == 1 {
+                        assert!(String::from_utf8_lossy(&request).starts_with("POST /api/maps/uninstall/42 "));
+                        let saved: Value = rocket::serde::json::from_slice(&std::fs::read(&server_log_path).expect("durable log before mutation")).expect("json");
+                        assert_eq!(saved[0]["outcome"], "requested");
+                        assert_eq!(saved[0]["additional_data"]["before"]["version"], "1.0");
+                    }
+                    let body = body.to_string();
+                    let response = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    stream.write_all(response.as_bytes()).await.expect("write");
+                }
+            });
+            let bridge = MapsBridgeState::from_config(&config, directory.path().to_path_buf()).expect("bridge");
+            let handle: ConfigHandle = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(config)));
+            let log = AdminActionLog::new(log_path);
+            let result = admin_uninstall_map(AdminUser(76561198000000001), State::from(&bridge), State::from(&log), State::from(&handle), 42).await;
+            assert_eq!(result.is_err(), failed);
+            daemon.await.expect("daemon");
+            let entries = log.history(15).await.expect("history");
+            assert_eq!(entries[0].action_id, 4);
+            assert_eq!(entries[0].outcome, if failed { ActionOutcome::Failed } else { ActionOutcome::Completed });
+            let data = entries[0].additional_data.as_ref().expect("data");
+            assert_eq!(data["name"], "No Mercy Rehab");
+            assert_eq!(data["url"], "https://steamcommunity.com/sharedfiles/filedetails/?id=123");
+            assert_eq!(data["before"]["version"], "1.0");
+        }
+    }
+
+    #[test]
+    fn map_audit_outcomes_distinguish_real_updates_no_changes_and_partial_failure() {
+        let result = |status| AdminUpdateCheckResponse { status, message: "result".to_string(), map: None };
+        assert_eq!(update_audit_outcome(&[result(UpdateStatus::UpToDate)]).0, ActionOutcome::Unchanged);
+        assert_eq!(update_audit_outcome(&[result(UpdateStatus::Updated)]).0, ActionOutcome::Completed);
+        assert_eq!(update_audit_outcome(&[result(UpdateStatus::Updated), result(UpdateStatus::Failed)]).0, ActionOutcome::Failed);
+    }
+
+    #[tokio::test]
+    async fn map_audit_suggestion_denial_retains_full_proposal() {
+        let directory = tempfile::tempdir().expect("directory");
+        let config = test_config();
+        let bridge = MapsBridgeState::from_config(&config, directory.path().to_path_buf()).expect("bridge");
+        let proposal = bridge.suggestions_store().create(models::MapSuggestion {
+            id: 0, source_kind: models::MapSuggestionSourceKind::Workshop, workshop_id: Some(123),
+            l4d2center_name: None, title: "No Mercy Rehab".to_string(), preview_url: None,
+            download_link: Some("https://steamcommunity.com/sharedfiles/filedetails/?id=123".to_string()),
+            size_bytes: None, proposed_by: "76561198000000002".to_string(), proposed_at: Utc::now(),
+        }).expect("proposal");
+        let handle: ConfigHandle = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(config)));
+        let log = AdminActionLog::new(directory.path().join("log_admin_actions.json"));
+        let result = suggestions::deny_map_suggestion(AdminUser(76561198000000001), State::from(&bridge), State::from(&log), State::from(&handle), proposal.id).await;
+        assert!(result.is_ok());
+        let entries = log.history(15).await.expect("history");
+        assert_eq!(entries[0].action_id, 8);
+        assert_eq!(entries[0].choice, ActionChoice::Deny);
+        assert_eq!(entries[0].additional_data.as_ref().expect("snapshot")["name"], "No Mercy Rehab");
+        assert_eq!(entries[0].additional_data.as_ref().expect("snapshot")["before"]["proposed_by"], "76561198000000002");
+        assert!(bridge.suggestions_store().get(proposal.id).expect("store").is_none());
     }
 
     #[test]

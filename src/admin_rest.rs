@@ -839,7 +839,7 @@ chat_id = 2
 		assert_eq!(initial["entries"].as_array().expect("entries").len(), 0);
 		assert_eq!(initial["maximum"], 15);
 		assert_eq!(initial["admin_names"], rocket::serde::json::json!({}));
-		assert_eq!(initial["actions"].as_array().expect("definitions").len(), 3);
+		assert_eq!(initial["actions"].as_array().expect("definitions").len(), ACTION_DEFINITIONS.len());
 		for path in ["soft-restart/backend", "restart/daemon?force=true", "soft-restart/daemon",
 			"game-server/start", "game-server/stop", "game-server/restart"] {
 			let response = client.post(format!("/api/admin/{path}"))

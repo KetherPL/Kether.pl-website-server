@@ -22,6 +22,13 @@ pub enum ActionChoice {
 	Stop,
 	Restart,
 	SoftRestart,
+	Create,
+	Update,
+	Delete,
+	Install,
+	UpdateAll,
+	Accept,
+	Deny,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +37,11 @@ pub enum AdminAction {
 	Backend = 1,
 	Daemon = 2,
 	GameServer = 3,
+	Map = 4,
+	Bind = 5,
+	BindSuggestion = 6,
+	Command = 7,
+	MapSuggestion = 8,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +73,27 @@ pub const ACTION_DEFINITIONS: &[ActionDefinition] = &[
 		choices: &[ActionChoice::Start, ActionChoice::Stop, ActionChoice::Restart],
 		modifiers: &[],
 	},
+	ActionDefinition {
+		id: AdminAction::Map as u16, key: "map",
+		choices: &[ActionChoice::Install, ActionChoice::Delete, ActionChoice::Update, ActionChoice::UpdateAll],
+		modifiers: &[],
+	},
+	ActionDefinition {
+		id: AdminAction::Bind as u16, key: "bind",
+		choices: &[ActionChoice::Create, ActionChoice::Update, ActionChoice::Delete], modifiers: &[],
+	},
+	ActionDefinition {
+		id: AdminAction::BindSuggestion as u16, key: "bind_suggestion",
+		choices: &[ActionChoice::Create, ActionChoice::Update, ActionChoice::Delete], modifiers: &[],
+	},
+	ActionDefinition {
+		id: AdminAction::Command as u16, key: "command",
+		choices: &[ActionChoice::Create, ActionChoice::Update, ActionChoice::Delete], modifiers: &[],
+	},
+	ActionDefinition {
+		id: AdminAction::MapSuggestion as u16, key: "map_suggestion",
+		choices: &[ActionChoice::Accept, ActionChoice::Deny], modifiers: &[],
+	},
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +103,7 @@ pub enum ActionOutcome {
 	Accepted,
 	Completed,
 	Failed,
+	Unchanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,11 +125,12 @@ pub struct AdminActionEntry {
 pub struct AdminActionLog {
 	path: PathBuf,
 	lock: Mutex<()>,
+	content_lock: Mutex<()>,
 }
 
 impl AdminActionLog {
 	pub fn new(path: PathBuf) -> Self {
-		Self { path, lock: Mutex::new(()) }
+		Self { path, lock: Mutex::new(()), content_lock: Mutex::new(()) }
 	}
 
 	fn read(&self) -> Result<Vec<AdminActionEntry>, String> {
@@ -143,6 +178,18 @@ impl AdminActionLog {
 		choice: ActionChoice,
 		force: bool,
 	) -> Result<Option<u64>, String> {
+		self.begin_with_data(config, steam_id, action, choice, force, None).await
+	}
+
+	pub async fn begin_with_data(
+		&self,
+		config: &crate::config::Config,
+		steam_id: i64,
+		action: AdminAction,
+		choice: ActionChoice,
+		force: bool,
+		additional_data: Option<Value>,
+	) -> Result<Option<u64>, String> {
 		if !config.admin_action_logging {
 			return Ok(None);
 		}
@@ -165,7 +212,7 @@ impl AdminActionLog {
 			action_id: action as u16,
 			choice,
 			modifiers,
-			additional_data: None,
+			additional_data,
 			unix_time: Utc::now().timestamp(),
 			outcome: ActionOutcome::Requested,
 			error: None,
@@ -196,9 +243,64 @@ impl AdminActionLog {
 		Ok(())
 	}
 
+	/// Serialize JSON content edits so each snapshot is the version actually changed.
+	pub async fn lock_content(&self) -> tokio::sync::MutexGuard<'_, ()> {
+		self.content_lock.lock().await
+	}
+
+	pub async fn record_change<T>(
+		&self,
+		config: &crate::config::Config,
+		steam_id: i64,
+		action: AdminAction,
+		choice: ActionChoice,
+		mut data: Value,
+		operation: impl std::future::Future<Output = Result<RecordedChange<T>, (rocket::http::Status, String)>>,
+	) -> Result<T, (rocket::http::Status, String)> {
+		let id = self.begin_with_data(config, steam_id, action, choice, false, Some(data.clone()))
+			.await.map_err(|error| {
+				eprintln!("Admin action logging failed before execution: {error}");
+				(rocket::http::Status::ServiceUnavailable, "Cannot persist admin action log".to_string())
+			})?;
+		let result = operation.await;
+		let (outcome, error) = match &result {
+			Ok(change) => {
+				if let (Some(initial), Some(final_data)) = (data.as_object_mut(), change.data.as_object()) {
+					initial.extend(final_data.clone());
+				}
+				(change.outcome, change.error.clone())
+			}
+			Err((_, error)) => (ActionOutcome::Failed, Some(error.clone())),
+		};
+		if let Err(error) = self.finish(id, outcome, Some(data), error).await {
+			eprintln!("Failed to finalize admin content action log: {error}");
+		}
+		result.map(|change| change.value)
+	}
+
 	pub async fn history(&self, maximum: usize) -> Result<Vec<AdminActionEntry>, String> {
 		let _guard = self.lock.lock().await;
 		Ok(self.read()?.into_iter().rev().take(maximum).collect())
+	}
+}
+
+pub struct RecordedChange<T> {
+	pub value: T,
+	pub data: Value,
+	pub outcome: ActionOutcome,
+	pub error: Option<String>,
+}
+
+impl<T> RecordedChange<T> {
+	pub fn completed(value: T, data: Value) -> Self {
+		Self { value, data, outcome: ActionOutcome::Completed, error: None }
+	}
+}
+
+pub fn config_snapshot(handle: &crate::steam_bot::registry::ConfigHandle) -> std::sync::Arc<crate::config::Config> {
+	match handle.read() {
+		Ok(config) => config.clone(),
+		Err(error) => error.into_inner().clone(),
 	}
 }
 

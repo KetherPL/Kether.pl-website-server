@@ -6,6 +6,10 @@
 # Add Steam IDs here, one per line for clarity, divided by commas
 frontend_admins = []
 
+# Admin Panel maintenance action history (maximum must be at least 1)
+admin_action_logging = true
+admin_action_logging_max = 15
+
 # L4D2 Server Configuration
 # Server address used for !status command and server queries (main server)
 [server]

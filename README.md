@@ -303,6 +303,31 @@ The website's **Admin Panel** page (visible to `frontend_admins` only) uses thes
 | POST | `/api/admin/restart/daemon?force=<bool>` | Restarts the daemon user service `ksd.service` through `/api/daemon/restart`; 409 while busy unless forced |
 | POST | `/api/admin/soft-restart/daemon?force=<bool>` | Re-executes the daemon in place through `/api/daemon/soft-restart`; 409 while busy unless forced |
 
+### Admin action history
+
+`GET /api/admin/actions` returns the action catalog and newest-first history to authenticated frontend admins. The Admin Panel's **Action history** button opens this list beside **Refresh**.
+
+Root-level `config.toml` settings (both support hot reload):
+
+```toml
+admin_action_logging = true
+admin_action_logging_max = 15
+```
+
+The maximum must be at least 1. `log_admin_actions.json` is created beside the executable on the first logged action or history read. Each new entry evicts the oldest entries beyond the configured limit. Disabling logging preserves existing history.
+
+Stable action IDs and choices:
+
+- `1`: backend — `restart`, `soft_restart`.
+- `2`: map daemon — `restart`, `soft_restart`; `force` modifier.
+- `3`: L4D2 game server — `start`, `stop`, `restart`.
+
+Each entry contains a string `steam_id` (exact SteamID64), numeric `action_id`, named `choice`, `modifiers`, Unix-seconds `unix_time`, `outcome`, optional `error`, and an `additional_data` slot for action results. New action types must use new IDs; existing IDs must not be reassigned.
+
+Authorized maintenance requests are saved as `requested` before execution. Restart requests become `accepted` when scheduled; game-server operations become `completed` on success; rejected or failed requests become `failed`. Acceptance does not confirm that a service returned online. An interrupted request can remain `requested`. Status refreshes, history reads, REPL commands and actions outside the Admin Panel maintenance routes are not recorded.
+
+Writes use atomic file replacement and private file permissions on Unix. An enabled logger that cannot save the initial entry prevents execution; a failure to update the outcome afterward is reported to stderr while retaining the saved request and the action's original response. Corrupt history is reported without replacing it.
+
 ## JSON Database Structure
 
 The server uses three JSON files for data storage:

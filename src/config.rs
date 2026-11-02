@@ -7,6 +7,11 @@ use tokio::fs;
 
 /// Configuration file name constant
 pub const CONF_FILE_NAME: &str = "config.toml";
+pub const DEFAULT_ADMIN_ACTION_LOGGING_MAX: usize = 15;
+
+fn default_admin_action_logging_max() -> std::num::NonZeroUsize {
+	std::num::NonZeroUsize::new(DEFAULT_ADMIN_ACTION_LOGGING_MAX).expect("positive log limit")
+}
 
 /// Main configuration structure loaded from config.toml
 /// 
@@ -18,6 +23,12 @@ struct ConfigFile {
 	/// Admin Steam IDs for frontend verification
 	#[serde(default)]
 	frontend_admins: Vec<i64>,
+
+	#[serde(default = "default_true")]
+	admin_action_logging: bool,
+
+	#[serde(default = "default_admin_action_logging_max")]
+	admin_action_logging_max: std::num::NonZeroUsize,
 
 	#[serde(default)]
 	steam: SteamConfig,
@@ -366,6 +377,8 @@ impl Default for ConfigFile {
 	fn default() -> Self {
 		ConfigFile {
 			frontend_admins: Vec::new(),
+			admin_action_logging: true,
+			admin_action_logging_max: default_admin_action_logging_max(),
 			steam: SteamConfig::default(),
 			server: ServerConfig::default(),
 			server2: ServerConfig::default(),
@@ -450,6 +463,8 @@ impl Default for ServerConfig {
 #[derive(Debug, Clone)]
 pub struct Config {
 	pub frontend_admins: Vec<i64>,
+	pub admin_action_logging: bool,
+	pub admin_action_logging_max: usize,
 	pub steam_web_api_key: String,
 	pub chat_group_id: u64,
 	pub chat_id: u64,
@@ -563,6 +578,8 @@ impl Config {
 	fn from_config_file(config_file: ConfigFile) -> Self {
 		Self {
 			frontend_admins: config_file.frontend_admins,
+			admin_action_logging: config_file.admin_action_logging,
+			admin_action_logging_max: config_file.admin_action_logging_max.get(),
 			steam_web_api_key: config_file.steam.web_api_key,
 			chat_group_id: config_file.steam.chat.group_id,
 			chat_id: config_file.steam.chat.chat_id,
@@ -636,6 +653,12 @@ impl Config {
 	pub fn diff(&self, new: &Config) -> ConfigChange {
 		let mut change = ConfigChange::default();
 
+		if self.admin_action_logging != new.admin_action_logging {
+			change.live_applied.push("admin_action_logging");
+		}
+		if self.admin_action_logging_max != new.admin_action_logging_max {
+			change.live_applied.push("admin_action_logging_max");
+		}
 		if self.frontend_admins != new.frontend_admins {
 			change.live_applied.push("frontend_admins");
 		}
@@ -775,6 +798,11 @@ impl Config {
 # Users with these Steam IDs have admin permissions on the frontend
 # Add Steam IDs here, one per line for clarity, divided by commas
 frontend_admins = []
+
+# Log Admin Panel maintenance actions to log_admin_actions.json beside the executable
+admin_action_logging = true
+# Maximum retained entries (must be at least 1)
+admin_action_logging_max = 15
 
 # L4D2 Server Configuration
 # Server address used for !status command and server queries (main server)
@@ -1201,6 +1229,23 @@ ignore_muted_commands = false
 		assert_eq!(parsed.server2_ip, "127.0.0.2");
 		assert_eq!(parsed.server2_port, 27016);
 		assert!(parsed.steam_bot_commands_without_mention);
+	}
+
+	#[test]
+	fn admin_action_logging_defaults_overrides_and_hot_reload() {
+		let defaults = Config::from_toml_str("").expect("defaults");
+		assert!(defaults.admin_action_logging);
+		assert_eq!(defaults.admin_action_logging_max, 15);
+		let configured = Config::from_toml_str(
+			"admin_action_logging = false\nadmin_action_logging_max = 3"
+		).expect("configured logging");
+		assert!(!configured.admin_action_logging);
+		assert_eq!(configured.admin_action_logging_max, 3);
+		let change = defaults.diff(&configured);
+		assert!(change.live_applied.contains(&"admin_action_logging"));
+		assert!(change.live_applied.contains(&"admin_action_logging_max"));
+		assert!(Config::from_toml_str("admin_action_logging_max = 0").is_err());
+		assert!(Config::from_toml_str("admin_action_logging_max = -1").is_err());
 	}
 
 	#[test]

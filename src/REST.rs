@@ -122,6 +122,9 @@ pub async fn build_rocket() -> Rocket<Build> {
 	{
 		rocket_build = rocket_build
 			.manage(crate::auth::ExchangeCodeStore::new())
+			.manage(crate::admin_actions::AdminActionLog::new(
+				crate::admin_actions::default_log_path().expect("admin action log path"),
+			))
 			.mount("/api/auth", crate::auth::mount_auth_routes())
 			.mount("/api/admin", crate::admin_rest::mount_admin_routes());
 	}

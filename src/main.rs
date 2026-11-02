@@ -55,6 +55,9 @@ mod auth;
 #[cfg(feature = "auth")]
 mod admin_rest;
 
+#[cfg(feature = "auth")]
+mod admin_actions;
+
 #[cfg(feature = "rest_api")]
 mod control;
 

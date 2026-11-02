@@ -12,6 +12,10 @@ use rocket::serde::{Deserialize, Serialize};
 use rocket::{get, options, post, routes, Route, State};
 
 use crate::auth::AdminUser;
+use crate::admin_actions::{
+	ActionChoice, ActionOutcome, AdminAction, AdminActionEntry, AdminActionLog,
+	ActionDefinition, ACTION_DEFINITIONS,
+};
 use crate::config::Config;
 use crate::control;
 use crate::steam_bot::registry::ConfigHandle;
@@ -115,6 +119,94 @@ type AdminResult<T> = Result<Json<T>, (Status, Json<AdminErrorResponse>)>;
 
 fn admin_error(status: Status, error: impl Into<String>) -> (Status, Json<AdminErrorResponse>) {
 	(status, Json(AdminErrorResponse { error: error.into() }))
+}
+
+async fn logged_action<T: Serialize>(
+	log: &AdminActionLog,
+	config: &Config,
+	steam_id: i64,
+	action: AdminAction,
+	choice: ActionChoice,
+	force: bool,
+	success_outcome: ActionOutcome,
+	operation: impl std::future::Future<Output = AdminResult<T>>,
+) -> AdminResult<T> {
+	let id = log.begin(config, steam_id, action, choice, force).await
+		.map_err(|error| {
+			eprintln!("Admin action logging failed before execution: {error}");
+			admin_error(Status::ServiceUnavailable, "Cannot persist admin action log")
+		})?;
+	let result = operation.await;
+	let (outcome, data, error) = match &result {
+		Ok(response) => (success_outcome, rocket::serde::json::to_value(&response.0).ok(), None),
+		Err((_, response)) => (ActionOutcome::Failed, None, Some(response.error.clone())),
+	};
+	if let Err(error) = log.finish(id, outcome, data, error).await {
+		// The action already ran; preserve its result and the durable requested entry.
+		eprintln!("Failed to finalize admin action log: {error}");
+	}
+	result
+}
+
+#[derive(Debug, Serialize)]
+#[serde(crate = "rocket::serde")]
+pub struct AdminActionHistory {
+	pub enabled: bool,
+	pub maximum: usize,
+	pub actions: &'static [ActionDefinition],
+	pub entries: Vec<AdminActionEntry>,
+	pub admin_names: std::collections::HashMap<String, String>,
+}
+
+async fn history_admin_names(
+	config: &Config,
+	entries: &[AdminActionEntry],
+) -> std::collections::HashMap<String, String> {
+	#[cfg(feature = "rest_steam")]
+	{
+		const PERSONA_LOOKUP_TIMEOUT: Duration = Duration::from_secs(4);
+		let mut steam_ids: Vec<u64> = entries.iter()
+			.filter_map(|entry| entry.steam_id.parse().ok()).collect();
+		steam_ids.sort_unstable();
+		steam_ids.dedup();
+		tokio::time::timeout(PERSONA_LOOKUP_TIMEOUT,
+			crate::steam_rest::resolve_persona_names(config, &steam_ids))
+			.await.unwrap_or_default().into_iter()
+			.filter(|(_, name)| !name.trim().is_empty())
+			.map(|(steam_id, name)| (steam_id.to_string(), name)).collect()
+	}
+	#[cfg(not(feature = "rest_steam"))]
+	{
+		let _ = (config, entries);
+		std::collections::HashMap::new()
+	}
+}
+
+#[get("/actions")]
+pub async fn admin_action_history(
+	_admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
+) -> AdminResult<AdminActionHistory> {
+	let config = config_snapshot(config_handle);
+	let entries = log.history(config.admin_action_logging_max).await
+		.map_err(|error| {
+			eprintln!("Cannot load admin action history: {error}");
+			admin_error(Status::InternalServerError, "Cannot load admin action history")
+		})?;
+	let admin_names = history_admin_names(&config, &entries).await;
+	Ok(Json(AdminActionHistory {
+		enabled: config.admin_action_logging,
+		maximum: config.admin_action_logging_max,
+		actions: ACTION_DEFINITIONS,
+		entries,
+		admin_names,
+	}))
+}
+
+#[options("/actions")]
+pub fn options_admin_action_history() -> Status {
+	Status::Ok
 }
 
 fn config_snapshot(handle: &State<ConfigHandle>) -> std::sync::Arc<Config> {
@@ -221,25 +313,41 @@ pub async fn admin_status(_admin: AdminUser, config_handle: &State<ConfigHandle>
 
 /// Restarts kiss.service through the backend's systemd user manager.
 #[post("/restart/backend")]
-pub async fn admin_restart_backend(admin: AdminUser) -> AdminResult<RestartAccepted> {
-	let requested_at = Utc::now();
-	tokio::task::spawn_blocking(control::request_restart)
-		.await
-		.map_err(|error| admin_error(Status::InternalServerError, format!("Restart task failed: {error}")))?
-		.map_err(|error| {
-			eprintln!("Website backend service restart failed: {error}");
-			admin_error(Status::ServiceUnavailable, error)
-		})?;
-	println!("Admin {} requested a website backend service restart", admin.0);
-	Ok(Json(RestartAccepted { requested_at }))
+pub async fn admin_restart_backend(
+	admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
+) -> AdminResult<RestartAccepted> {
+	let config = config_snapshot(config_handle);
+	logged_action(log, &config, admin.0, AdminAction::Backend, ActionChoice::Restart,
+		false, ActionOutcome::Accepted, async {
+			let requested_at = Utc::now();
+			tokio::task::spawn_blocking(control::request_restart)
+				.await
+				.map_err(|error| admin_error(Status::InternalServerError, format!("Restart task failed: {error}")))?
+				.map_err(|error| {
+					eprintln!("Website backend service restart failed: {error}");
+					admin_error(Status::ServiceUnavailable, error)
+				})?;
+			println!("Admin {} requested a website backend service restart", admin.0);
+			Ok(Json(RestartAccepted { requested_at }))
+		}).await
 }
 
 /// Restarts the REST server and SteamBot in-process (REPL `soft-restart`).
 #[post("/soft-restart/backend")]
-pub fn admin_soft_restart_backend(admin: AdminUser) -> AdminResult<RestartAccepted> {
-	control::request_soft_restart().map_err(|error| admin_error(Status::ServiceUnavailable, error))?;
-	println!("Admin {} requested a website backend soft restart", admin.0);
-	Ok(Json(RestartAccepted { requested_at: Utc::now() }))
+pub async fn admin_soft_restart_backend(
+	admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
+) -> AdminResult<RestartAccepted> {
+	let config = config_snapshot(config_handle);
+	logged_action(log, &config, admin.0, AdminAction::Backend, ActionChoice::SoftRestart,
+		false, ActionOutcome::Accepted, async {
+			control::request_soft_restart().map_err(|error| admin_error(Status::ServiceUnavailable, error))?;
+			println!("Admin {} requested a website backend soft restart", admin.0);
+			Ok(Json(RestartAccepted { requested_at: Utc::now() }))
+		}).await
 }
 
 /// Restarts ksd.service through the daemon's systemd user manager.
@@ -247,9 +355,13 @@ pub fn admin_soft_restart_backend(admin: AdminUser) -> AdminResult<RestartAccept
 pub async fn admin_restart_daemon(
 	admin: AdminUser,
 	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	force: Option<bool>,
 ) -> AdminResult<RestartAccepted> {
-	proxy_daemon_restart(admin, config_handle, force, "restart").await
+	let config = config_snapshot(config_handle);
+	logged_action(log, &config, admin.0, AdminAction::Daemon, ActionChoice::Restart,
+		force.unwrap_or(false), ActionOutcome::Accepted,
+		proxy_daemon_restart(admin, &config, force, "restart")).await
 }
 
 /// Re-executes the daemon in place, preserving its PID and terminal.
@@ -257,18 +369,21 @@ pub async fn admin_restart_daemon(
 pub async fn admin_soft_restart_daemon(
 	admin: AdminUser,
 	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 	force: Option<bool>,
 ) -> AdminResult<RestartAccepted> {
-	proxy_daemon_restart(admin, config_handle, force, "soft-restart").await
+	let config = config_snapshot(config_handle);
+	logged_action(log, &config, admin.0, AdminAction::Daemon, ActionChoice::SoftRestart,
+		force.unwrap_or(false), ActionOutcome::Accepted,
+		proxy_daemon_restart(admin, &config, force, "soft-restart")).await
 }
 
 async fn proxy_daemon_restart(
 	admin: AdminUser,
-	config_handle: &State<ConfigHandle>,
+	config: &Config,
 	force: Option<bool>,
 	action: &str,
 ) -> AdminResult<RestartAccepted> {
-	let config = config_snapshot(config_handle);
 	let base = daemon_base_url(&config).ok_or_else(|| {
 		admin_error(Status::ServiceUnavailable, "server_daemon.daemon_url is not configured")
 	})?;
@@ -278,7 +393,7 @@ async fn proxy_daemon_restart(
 		&client,
 		reqwest::Method::POST,
 		format!("{base}/api/daemon/{action}?force={force}"),
-		&config,
+		config,
 	)
 	.send()
 	.await
@@ -409,30 +524,36 @@ async fn proxy_game_server_action(
 pub async fn admin_game_server_start(
 	admin: AdminUser,
 	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 ) -> AdminResult<GameServerActionResult> {
 	let config = config_snapshot(config_handle);
 	println!("Admin {} requested L4D2 server start", admin.0);
-	proxy_game_server_action(&config, "start").await
+	logged_action(log, &config, admin.0, AdminAction::GameServer, ActionChoice::Start,
+		false, ActionOutcome::Completed, proxy_game_server_action(&config, "start")).await
 }
 
 #[post("/game-server/stop")]
 pub async fn admin_game_server_stop(
 	admin: AdminUser,
 	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 ) -> AdminResult<GameServerActionResult> {
 	let config = config_snapshot(config_handle);
 	println!("Admin {} requested L4D2 server stop", admin.0);
-	proxy_game_server_action(&config, "stop").await
+	logged_action(log, &config, admin.0, AdminAction::GameServer, ActionChoice::Stop,
+		false, ActionOutcome::Completed, proxy_game_server_action(&config, "stop")).await
 }
 
 #[post("/game-server/restart")]
 pub async fn admin_game_server_restart(
 	admin: AdminUser,
 	config_handle: &State<ConfigHandle>,
+	log: &State<AdminActionLog>,
 ) -> AdminResult<GameServerActionResult> {
 	let config = config_snapshot(config_handle);
 	println!("Admin {} requested L4D2 server restart", admin.0);
-	proxy_game_server_action(&config, "restart").await
+	logged_action(log, &config, admin.0, AdminAction::GameServer, ActionChoice::Restart,
+		false, ActionOutcome::Completed, proxy_game_server_action(&config, "restart")).await
 }
 
 #[options("/game-server/status")]
@@ -458,6 +579,8 @@ pub fn options_game_server_restart() -> Status {
 pub fn mount_admin_routes() -> Vec<Route> {
 	routes![
 		admin_status,
+		admin_action_history,
+		options_admin_action_history,
 		admin_restart_backend,
 		admin_soft_restart_backend,
 		admin_restart_daemon,
@@ -530,7 +653,10 @@ chat_id = 2
 		let handle: ConfigHandle = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(
 			config.clone(),
 		)));
-		let rocket = rocket::build().manage(handle).mount("/api/admin", mount_admin_routes());
+		let directory = tempfile::tempdir().expect("log directory");
+		let log = AdminActionLog::new(directory.path().join("log_admin_actions.json"));
+		let rocket = rocket::build().manage(handle).manage(log).manage(directory)
+			.mount("/api/admin", mount_admin_routes());
 		(
 			rocket::local::asynchronous::Client::tracked(rocket).await.expect("client"),
 			config,
@@ -667,8 +793,12 @@ chat_id = 2
 			let handle: ConfigHandle = std::sync::Arc::new(std::sync::RwLock::new(
 				std::sync::Arc::new(config.clone()),
 			));
+			let directory = tempfile::tempdir().expect("log directory");
+			let log = AdminActionLog::new(directory.path().join("log_admin_actions.json"));
 			let client = rocket::local::asynchronous::Client::tracked(
-				rocket::build().manage(handle).mount("/api/admin", mount_admin_routes()),
+				rocket::build().manage(handle)
+					.manage(log).manage(directory)
+					.mount("/api/admin", mount_admin_routes()),
 			).await.expect("client");
 			let daemon = tokio::spawn(async move {
 				let (mut stream, _) = listener.accept().await.expect("accept");
@@ -686,10 +816,96 @@ chat_id = 2
 			let response = client.post(format!("/api/admin/{action}/daemon?force=true"))
 				.header(bearer(ADMIN_ID, &config)).header(origin()).dispatch().await;
 			assert_eq!(response.status(), Status::Ok);
+			let history: rocket::serde::json::Value = client.get("/api/admin/actions")
+				.header(bearer(ADMIN_ID, &config)).dispatch().await.into_json().await.expect("history");
+			assert_eq!(history["entries"][0]["action_id"], 2);
+			assert_eq!(history["entries"][0]["modifiers"]["force"], true);
+			assert_eq!(history["entries"][0]["outcome"], "accepted");
+			assert!(history["entries"][0]["additional_data"]["requested_at"].is_string());
 			let request = daemon.await.expect("daemon");
 			assert!(request.starts_with(&format!("POST /api/daemon/{action}?force=true HTTP/1.1")));
 			assert!(request.to_ascii_lowercase().contains("authorization: bearer test-daemon-key"));
 		}
+	}
+
+	#[rocket::async_test]
+	async fn history_requires_admin_and_records_only_maintenance_requests() {
+		let (client, config) = client().await;
+		assert_eq!(client.get("/api/admin/actions").dispatch().await.status(), Status::Unauthorized);
+		assert_eq!(client.get("/api/admin/actions").header(bearer(USER_ID, &config))
+			.dispatch().await.status(), Status::Forbidden);
+		let initial: rocket::serde::json::Value = client.get("/api/admin/actions")
+			.header(bearer(ADMIN_ID, &config)).dispatch().await.into_json().await.expect("history");
+		assert_eq!(initial["entries"].as_array().expect("entries").len(), 0);
+		assert_eq!(initial["maximum"], 15);
+		assert_eq!(initial["admin_names"], rocket::serde::json::json!({}));
+		assert_eq!(initial["actions"].as_array().expect("definitions").len(), 3);
+		for path in ["soft-restart/backend", "restart/daemon?force=true", "soft-restart/daemon",
+			"game-server/start", "game-server/stop", "game-server/restart"] {
+			let response = client.post(format!("/api/admin/{path}"))
+				.header(bearer(ADMIN_ID, &config)).header(origin()).dispatch().await;
+			assert_eq!(response.status(), Status::ServiceUnavailable);
+		}
+		client.get("/api/admin/status").header(bearer(ADMIN_ID, &config)).dispatch().await;
+		let history: rocket::serde::json::Value = client.get("/api/admin/actions")
+			.header(bearer(ADMIN_ID, &config)).dispatch().await.into_json().await.expect("history");
+		let entries = history["entries"].as_array().expect("entries");
+		assert_eq!(entries.len(), 6);
+		assert!(entries.iter().all(|entry| entry["steam_id"] == ADMIN_ID.to_string()));
+		assert!(entries.iter().all(|entry| entry["outcome"] == "failed"));
+		assert!(entries.iter().all(|entry| entry["error"].is_string()));
+		assert_eq!(entries[0]["action_id"], 3);
+		assert_eq!(entries[0]["choice"], "restart");
+		assert_eq!(entries[4]["modifiers"]["force"], true);
+		assert_eq!(entries[5]["choice"], "soft_restart");
+	}
+
+	#[rocket::async_test]
+	async fn disabled_logging_keeps_actions_available_and_history_empty() {
+		let (client, config) = client().await;
+		let handle = client.rocket().state::<ConfigHandle>().expect("config handle");
+		let mut disabled = config.clone();
+		disabled.admin_action_logging = false;
+		*handle.write().expect("config lock") = std::sync::Arc::new(disabled);
+		let response = client.post("/api/admin/soft-restart/backend")
+			.header(bearer(ADMIN_ID, &config)).header(origin()).dispatch().await;
+		assert_eq!(response.status(), Status::ServiceUnavailable);
+		let history: rocket::serde::json::Value = client.get("/api/admin/actions")
+			.header(bearer(ADMIN_ID, &config)).dispatch().await.into_json().await.expect("history");
+		assert_eq!(history["enabled"], false);
+		assert_eq!(history["entries"].as_array().expect("entries").len(), 0);
+	}
+
+	#[tokio::test]
+	async fn logging_failure_prevents_action_execution() {
+		let directory = tempfile::tempdir().expect("directory");
+		let path = directory.path().join("log_admin_actions.json");
+		std::fs::write(&path, "invalid history").expect("corrupt history");
+		let log = AdminActionLog::new(path);
+		let executed = std::sync::atomic::AtomicBool::new(false);
+		let result = logged_action(&log, &auth_test_config(), ADMIN_ID,
+			AdminAction::Backend, ActionChoice::Restart, false, ActionOutcome::Accepted, async {
+				executed.store(true, std::sync::atomic::Ordering::SeqCst);
+				Ok(Json(RestartAccepted { requested_at: Utc::now() }))
+			}).await;
+		assert_eq!(result.expect_err("logging error").0, Status::ServiceUnavailable);
+		assert!(!executed.load(std::sync::atomic::Ordering::SeqCst));
+	}
+
+	#[tokio::test]
+	async fn requested_entry_precedes_execution_and_completed_result_contains_data() {
+		let directory = tempfile::tempdir().expect("directory");
+		let log = AdminActionLog::new(directory.path().join("log_admin_actions.json"));
+		let result = logged_action(&log, &auth_test_config(), ADMIN_ID,
+			AdminAction::GameServer, ActionChoice::Start, false, ActionOutcome::Completed, async {
+				let before = log.history(15).await.expect("history before execution");
+				assert_eq!(before[0].outcome, ActionOutcome::Requested);
+				Ok(Json(rocket::serde::json::json!({"service": "l4d2", "pid": 123})))
+			}).await;
+		assert!(result.is_ok());
+		let after = log.history(15).await.expect("completed history");
+		assert_eq!(after[0].outcome, ActionOutcome::Completed);
+		assert_eq!(after[0].additional_data.as_ref().expect("result")["service"], "l4d2");
 	}
 
 	#[tokio::test]

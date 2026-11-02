@@ -3,3 +3,5 @@
 /vendor.tar
 /vendor/
 Cargo.lock
+/log_admin_actions.json
+/log_admin_actions.*.tmp

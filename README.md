@@ -299,7 +299,8 @@ The website's **Admin Panel** page (visible to `frontend_admins` only) uses thes
 |---|---|---|
 | GET | `/api/admin/status` | Backend version/PID/uptime and the KetherServerDaemon's status (via `[server_daemon].daemon_url`) |
 | POST | `/api/admin/restart/backend` | Same in-process restart as the REPL `restart` command |
-| POST | `/api/admin/restart/daemon?force=<bool>` | Asks the daemon to restart itself (needs a daemon with `/api/daemon/restart`; 409 while it is busy unless forced) |
+| POST | `/api/admin/restart/daemon?force=<bool>` | Restarts the daemon user service `ksd.service` through `/api/daemon/restart`; 409 while busy unless forced |
+| POST | `/api/admin/soft-restart/daemon?force=<bool>` | Re-executes the daemon in place through `/api/daemon/soft-restart`; 409 while busy unless forced |
 
 ## JSON Database Structure
 

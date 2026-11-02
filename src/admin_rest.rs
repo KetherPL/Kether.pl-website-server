@@ -39,6 +39,8 @@ pub struct DaemonStatus {
 	pub uptime_secs: u64,
 	pub busy: Option<String>,
 	pub restart_supported: bool,
+	#[serde(default)]
+	pub soft_restart_supported: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,13 +225,31 @@ pub fn admin_restart_backend(admin: AdminUser) -> AdminResult<RestartAccepted> {
 	Ok(Json(RestartAccepted { requested_at: Utc::now() }))
 }
 
-/// Asks the KetherServerDaemon to restart itself. Without `force`, the daemon refuses
-/// (409) while map downloads/installs/updates are running.
+/// Restarts ksd.service through the daemon's systemd user manager.
 #[post("/restart/daemon?<force>")]
 pub async fn admin_restart_daemon(
 	admin: AdminUser,
 	config_handle: &State<ConfigHandle>,
 	force: Option<bool>,
+) -> AdminResult<RestartAccepted> {
+	proxy_daemon_restart(admin, config_handle, force, "restart").await
+}
+
+/// Re-executes the daemon in place, preserving its PID and terminal.
+#[post("/soft-restart/daemon?<force>")]
+pub async fn admin_soft_restart_daemon(
+	admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+	force: Option<bool>,
+) -> AdminResult<RestartAccepted> {
+	proxy_daemon_restart(admin, config_handle, force, "soft-restart").await
+}
+
+async fn proxy_daemon_restart(
+	admin: AdminUser,
+	config_handle: &State<ConfigHandle>,
+	force: Option<bool>,
+	action: &str,
 ) -> AdminResult<RestartAccepted> {
 	let config = config_snapshot(config_handle);
 	let base = daemon_base_url(&config).ok_or_else(|| {
@@ -240,7 +260,7 @@ pub async fn admin_restart_daemon(
 	let response = daemon_request(
 		&client,
 		reqwest::Method::POST,
-		format!("{base}/api/daemon/restart?force={force}"),
+		format!("{base}/api/daemon/{action}?force={force}"),
 		&config,
 	)
 	.send()
@@ -249,7 +269,7 @@ pub async fn admin_restart_daemon(
 
 	let status = response.status();
 	if status.is_success() {
-		println!("Admin {} requested a daemon restart (force: {})", admin.0, force);
+		println!("Admin {} requested a daemon {action} (force: {})", admin.0, force);
 		return Ok(Json(RestartAccepted { requested_at: Utc::now() }));
 	}
 	let message = response
@@ -280,6 +300,11 @@ pub fn options_admin_restart_backend() -> Status {
 
 #[options("/restart/daemon")]
 pub fn options_admin_restart_daemon() -> Status {
+	Status::Ok
+}
+
+#[options("/soft-restart/daemon")]
+pub fn options_admin_soft_restart_daemon() -> Status {
 	Status::Ok
 }
 
@@ -413,6 +438,7 @@ pub fn mount_admin_routes() -> Vec<Route> {
 		admin_status,
 		admin_restart_backend,
 		admin_restart_daemon,
+		admin_soft_restart_daemon,
 		admin_game_server_status,
 		admin_game_server_start,
 		admin_game_server_stop,
@@ -420,6 +446,7 @@ pub fn mount_admin_routes() -> Vec<Route> {
 		options_admin_status,
 		options_admin_restart_backend,
 		options_admin_restart_daemon,
+		options_admin_soft_restart_daemon,
 		options_game_server_status,
 		options_game_server_start,
 		options_game_server_stop,
@@ -558,6 +585,63 @@ chat_id = 2
 			.dispatch()
 			.await;
 		assert_eq!(daemon.status(), Status::ServiceUnavailable);
+	}
+
+	#[rocket::async_test]
+	async fn daemon_restart_modes_require_admin_and_allowed_origin() {
+		let (client, config) = client().await;
+		for action in ["restart", "soft-restart"] {
+			let path = format!("/api/admin/{action}/daemon?force=true");
+			assert_eq!(client.post(&path).header(origin()).dispatch().await.status(), Status::Unauthorized);
+			let user = client.post(&path).header(bearer(USER_ID, &config))
+				.header(origin()).dispatch().await;
+			assert_eq!(user.status(), Status::Forbidden);
+			let foreign = client.post(&path).header(bearer(ADMIN_ID, &config))
+				.header(rocket::http::Header::new("Origin", "https://evil.example"))
+				.dispatch().await;
+			assert_eq!(foreign.status(), Status::Forbidden);
+			let admin = client.post(&path).header(bearer(ADMIN_ID, &config))
+				.header(origin()).dispatch().await;
+			assert_eq!(admin.status(), Status::ServiceUnavailable);
+		}
+	}
+
+	#[rocket::async_test]
+	async fn daemon_restart_modes_proxy_path_force_and_api_key() {
+		use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+		for action in ["restart", "soft-restart"] {
+			let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listen");
+			let address = listener.local_addr().expect("address");
+			let mut config = auth_test_config();
+			config.server_daemon_url = format!("http://{address}");
+			config.server_daemon_sync_api_key = "test-daemon-key".to_string();
+			let handle: ConfigHandle = std::sync::Arc::new(std::sync::RwLock::new(
+				std::sync::Arc::new(config.clone()),
+			));
+			let client = rocket::local::asynchronous::Client::tracked(
+				rocket::build().manage(handle).mount("/api/admin", mount_admin_routes()),
+			).await.expect("client");
+			let daemon = tokio::spawn(async move {
+				let (mut stream, _) = listener.accept().await.expect("accept");
+				let mut request = Vec::new();
+				let mut buffer = [0; 1024];
+				while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+					let length = stream.read(&mut buffer).await.expect("read");
+					assert!(length > 0, "request headers must be complete");
+					request.extend_from_slice(&buffer[..length]);
+				}
+				stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 26\r\nConnection: close\r\n\r\n{\"success\":true,\"data\":{}}")
+					.await.expect("response");
+				String::from_utf8(request).expect("request")
+			});
+			let response = client.post(format!("/api/admin/{action}/daemon?force=true"))
+				.header(bearer(ADMIN_ID, &config)).header(origin()).dispatch().await;
+			assert_eq!(response.status(), Status::Ok);
+			let request = daemon.await.expect("daemon");
+			assert!(request.starts_with(&format!("POST /api/daemon/{action}?force=true HTTP/1.1")));
+			assert!(request.to_ascii_lowercase().contains("authorization: bearer test-daemon-key"));
+		}
 	}
 
 	#[tokio::test]
